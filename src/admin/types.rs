@@ -253,8 +253,19 @@ pub struct UpdateApiKeyRequest {
     #[serde(default)]
     pub enabled: Option<bool>,
     /// 过期时间（null 表示永不过期）
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_datetime")]
     pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+}
+
+/// 区分 JSON 中"字段缺失"与"字段为 null"
+/// 缺失 → None（不更新），null → Some(None)（永不过期），有值 → Some(Some(dt))
+fn deserialize_optional_datetime<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<chrono::DateTime<chrono::Utc>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
 }
 
 /// 错误响应
