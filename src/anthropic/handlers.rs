@@ -27,6 +27,38 @@ use super::stream::{BufferedStreamContext, SseEvent, StreamContext};
 use super::types::{CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse, OutputConfig, Thinking};
 use super::websearch;
 
+/// GET /v1/ping
+///
+/// 诊断端点（无需认证），返回请求的关键信息，用于排查客户端连接问题
+pub async fn ping(request: axum::http::Request<Body>) -> impl IntoResponse {
+    let method = request.method().to_string();
+    let uri = request.uri().to_string();
+    let headers: serde_json::Map<String, serde_json::Value> = request
+        .headers()
+        .iter()
+        .filter(|(name, _)| {
+            let n = name.as_str();
+            // 只返回有用的 header，隐藏 API key
+            n != "x-api-key" && n != "authorization"
+        })
+        .map(|(name, value)| {
+            (
+                name.to_string(),
+                serde_json::Value::String(value.to_str().unwrap_or("<binary>").to_string()),
+            )
+        })
+        .collect();
+
+    Json(json!({
+        "status": "ok",
+        "method": method,
+        "uri": uri,
+        "headers": headers,
+        "models_count": build_model_list().len(),
+        "hint": "If you see this, the proxy is reachable. Try GET /v1/models with your API key to verify auth."
+    }))
+}
+
 /// 将 KiroProvider 错误映射为 HTTP 响应
 fn map_provider_error(err: Error) -> Response {
     let err_str = err.to_string();
@@ -73,7 +105,82 @@ fn map_provider_error(err: Error) -> Response {
 pub async fn get_models() -> impl IntoResponse {
     tracing::info!("Received GET /v1/models request");
 
-    let models = vec![
+    Json(ModelsResponse {
+        object: "list".to_string(),
+        data: build_model_list(),
+    })
+}
+
+/// 构建可用模型列表（供 get_models 和 get_model 共用）
+fn build_model_list() -> Vec<Model> {
+    vec![
+        // === 旧版模型 ID（兼容旧版 Claude Code 客户端） ===
+        // 这些旧 ID 在 map_model() 中会被正确映射到对应的 Kiro 模型
+        Model {
+            id: "claude-3-5-sonnet-20241022".to_string(),
+            object: "model".to_string(),
+            created: 1729555200,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude 3.5 Sonnet".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 8192,
+        },
+        Model {
+            id: "claude-3-5-haiku-20241022".to_string(),
+            object: "model".to_string(),
+            created: 1729555200,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude 3.5 Haiku".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 8192,
+        },
+        Model {
+            id: "claude-3-opus-20240229".to_string(),
+            object: "model".to_string(),
+            created: 1709164800,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude 3 Opus".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 4096,
+        },
+        Model {
+            id: "claude-3-haiku-20240307".to_string(),
+            object: "model".to_string(),
+            created: 1709769600,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude 3 Haiku".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 4096,
+        },
+        Model {
+            id: "claude-3-sonnet-20240229".to_string(),
+            object: "model".to_string(),
+            created: 1709164800,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude 3 Sonnet".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 4096,
+        },
+        // === Claude 4.x 过渡期模型 ID ===
+        Model {
+            id: "claude-sonnet-4-20250514".to_string(),
+            object: "model".to_string(),
+            created: 1747180800,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 4".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+        },
+        Model {
+            id: "claude-opus-4-20250514".to_string(),
+            object: "model".to_string(),
+            created: 1747180800,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Opus 4".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+        },
+        // === 当前主力模型 ===
         Model {
             id: "claude-sonnet-4-5-20250929".to_string(),
             object: "model".to_string(),
@@ -164,12 +271,31 @@ pub async fn get_models() -> impl IntoResponse {
             model_type: "chat".to_string(),
             max_tokens: 32000,
         },
-    ];
+    ]
+}
 
-    Json(ModelsResponse {
-        object: "list".to_string(),
-        data: models,
-    })
+/// GET /v1/models/:model_id
+///
+/// 返回指定模型的信息
+pub async fn get_model(
+    axum::extract::Path(model_id): axum::extract::Path<String>,
+) -> Response {
+    tracing::info!(model_id = %model_id, "Received GET /v1/models/:model_id request");
+
+    // 复用 get_models 的模型列表，查找匹配的模型
+    let models = build_model_list();
+    if let Some(model) = models.into_iter().find(|m| m.id == model_id) {
+        Json(model).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse::new(
+                "not_found_error",
+                format!("Model '{}' not found", model_id),
+            )),
+        )
+            .into_response()
+    }
 }
 
 /// POST /v1/messages

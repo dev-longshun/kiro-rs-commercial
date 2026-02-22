@@ -6,11 +6,12 @@ use axum::{
     middleware,
     routing::{get, post},
 };
+use tower_http::trace::TraceLayer;
 
 use crate::kiro::provider::KiroProvider;
 
 use super::{
-    handlers::{count_tokens, get_models, post_messages, post_messages_cc},
+    handlers::{count_tokens, get_model, get_models, ping, post_messages, post_messages_cc},
     middleware::{AppState, auth_middleware, cors_layer},
 };
 
@@ -65,9 +66,14 @@ pub fn create_router_with_provider_and_state(
 }
 
 fn build_router(state: AppState) -> Router {
+    // 不需要认证的公开路由
+    let public_routes = Router::new()
+        .route("/v1/ping", get(ping));
+
     // 需要认证的 /v1 路由
     let v1_routes = Router::new()
         .route("/models", get(get_models))
+        .route("/models/{model_id}", get(get_model))
         .route("/messages", post(post_messages))
         .route("/messages/count_tokens", post(count_tokens))
         .layer(middleware::from_fn_with_state(
@@ -86,9 +92,35 @@ fn build_router(state: AppState) -> Router {
         ));
 
     Router::new()
+        .merge(public_routes)
         .nest("/v1", v1_routes)
         .nest("/cc/v1", cc_v1_routes)
         .layer(cors_layer())
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        user_agent = request.headers()
+                            .get("user-agent")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("-"),
+                    )
+                })
+                .on_response(
+                    |response: &axum::http::Response<_>,
+                     latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        tracing::info!(
+                            status = %response.status(),
+                            latency_ms = latency.as_millis(),
+                            "response"
+                        );
+                    },
+                ),
+        )
         .with_state(state)
 }
