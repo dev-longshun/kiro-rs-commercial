@@ -46,7 +46,25 @@ pub fn create_router_with_provider(
     if let Some(arn) = profile_arn {
         state = state.with_profile_arn(arn);
     }
+    build_router(state)
+}
 
+/// 创建带有预构建 AppState 的 Anthropic API 路由
+pub fn create_router_with_provider_and_state(
+    mut state: AppState,
+    kiro_provider: Option<KiroProvider>,
+    profile_arn: Option<String>,
+) -> Router {
+    if let Some(provider) = kiro_provider {
+        state = state.with_kiro_provider(provider);
+    }
+    if let Some(arn) = profile_arn {
+        state = state.with_profile_arn(arn);
+    }
+    build_router(state)
+}
+
+fn build_router(state: AppState) -> Router {
     // 需要认证的 /v1 路由
     let v1_routes = Router::new()
         .route("/models", get(get_models))

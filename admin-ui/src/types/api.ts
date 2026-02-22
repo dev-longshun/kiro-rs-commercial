@@ -94,3 +94,24 @@ export interface AddCredentialResponse {
   credentialId: number
   email?: string
 }
+
+// API Key 类型
+export interface ApiKeyItem {
+  id: number
+  key: string
+  name: string
+  enabled: boolean
+  createdAt: string
+  expiresAt: string | null
+}
+
+export interface CreateApiKeyRequest {
+  name: string
+  expiresAt?: string | null
+}
+
+export interface UpdateApiKeyRequest {
+  name?: string
+  enabled?: boolean
+  expiresAt?: string | null
+}
