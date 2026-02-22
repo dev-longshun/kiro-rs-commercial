@@ -9,6 +9,9 @@ import type {
   AddCredentialRequest,
   AddCredentialResponse,
   UpdateCredentialRequest,
+  ApiKeyItem,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -101,5 +104,39 @@ export async function getLoadBalancingMode(): Promise<{ mode: 'priority' | 'bala
 // 设置负载均衡模式
 export async function setLoadBalancingMode(mode: 'priority' | 'balanced'): Promise<{ mode: 'priority' | 'balanced' }> {
   const { data } = await api.put<{ mode: 'priority' | 'balanced' }>('/config/load-balancing', { mode })
+  return data
+}
+
+// ============ 服务器信息 ============
+
+// 获取服务器连接信息
+export async function getServerInfo(): Promise<{ masterApiKey: string | null }> {
+  const { data } = await api.get<{ masterApiKey: string | null }>('/server-info')
+  return data
+}
+
+// ============ API Key 管理 ============
+
+// 获取所有 API Key
+export async function getApiKeys(): Promise<ApiKeyItem[]> {
+  const { data } = await api.get<ApiKeyItem[]>('/api-keys')
+  return data
+}
+
+// 创建 API Key
+export async function createApiKey(req: CreateApiKeyRequest): Promise<ApiKeyItem> {
+  const { data } = await api.post<ApiKeyItem>('/api-keys', req)
+  return data
+}
+
+// 更新 API Key
+export async function updateApiKey(id: number, req: UpdateApiKeyRequest): Promise<ApiKeyItem> {
+  const { data } = await api.put<ApiKeyItem>(`/api-keys/${id}`, req)
+  return data
+}
+
+// 删除 API Key
+export async function deleteApiKey(id: number): Promise<SuccessResponse> {
+  const { data } = await api.delete<SuccessResponse>(`/api-keys/${id}`)
   return data
 }

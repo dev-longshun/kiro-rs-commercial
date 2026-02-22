@@ -229,6 +229,34 @@ impl SuccessResponse {
     }
 }
 
+// ============ API Key 管理 ============
+
+/// 创建 API Key 请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiKeyRequest {
+    /// 备注名称（如 "张三-月付"）
+    pub name: String,
+    /// 过期时间（可选，ISO 8601 格式）
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// 更新 API Key 请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateApiKeyRequest {
+    /// 备注名称
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 启用状态
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// 过期时间（null 表示永不过期）
+    #[serde(default)]
+    pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+}
+
 /// 错误响应
 #[derive(Debug, Serialize)]
 pub struct AdminErrorResponse {

@@ -13,6 +13,7 @@ use clap::Parser;
 use kiro::model::credentials::{CredentialsConfig, KiroCredentials};
 use kiro::provider::KiroProvider;
 use kiro::token_manager::MultiTokenManager;
+use model::api_key::ApiKeyManager;
 use model::arg::Args;
 use model::config::Config;
 
@@ -106,8 +107,23 @@ async fn main() {
     });
 
     // 构建 Anthropic API 路由（从第一个凭据获取 profile_arn）
-    let anthropic_app = anthropic::create_router_with_provider(
-        &api_key,
+    // 加载 API Key 管理器（api_keys.json 与配置文件同目录）
+    let api_keys_path = std::path::Path::new(&config_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("api_keys.json");
+    let api_key_manager = ApiKeyManager::load(&api_keys_path).unwrap_or_else(|e| {
+        tracing::error!("加载 API Keys 失败: {}", e);
+        std::process::exit(1);
+    });
+    let api_key_manager = Arc::new(api_key_manager);
+    tracing::info!("已加载 {} 个用户 API Key", api_key_manager.list().len());
+
+    let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key);
+    anthropic_app_state = anthropic_app_state.with_api_key_manager(api_key_manager.clone());
+
+    let anthropic_app = anthropic::create_router_with_provider_and_state(
+        anthropic_app_state,
         Some(kiro_provider),
         first_credentials.profile_arn.clone(),
     );
@@ -126,7 +142,9 @@ async fn main() {
             anthropic_app
         } else {
             let admin_service = admin::AdminService::new(token_manager.clone());
-            let admin_state = admin::AdminState::new(admin_key, admin_service);
+            let admin_state = admin::AdminState::new(admin_key, admin_service)
+                .with_master_api_key(&api_key)
+                .with_api_key_manager(api_key_manager.clone());
             let admin_app = admin::create_admin_router(admin_state);
 
             // 创建 Admin UI 路由
@@ -157,6 +175,10 @@ async fn main() {
         tracing::info!("  POST /api/admin/credentials/:index/priority");
         tracing::info!("  POST /api/admin/credentials/:index/reset");
         tracing::info!("  GET  /api/admin/credentials/:index/balance");
+        tracing::info!("  GET  /api/admin/api-keys");
+        tracing::info!("  POST /api/admin/api-keys");
+        tracing::info!("  PUT  /api/admin/api-keys/:id");
+        tracing::info!("  DELETE /api/admin/api-keys/:id");
         tracing::info!("Admin UI:");
         tracing::info!("  GET  /admin");
     }

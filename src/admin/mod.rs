@@ -8,6 +8,7 @@
 //! - 修改凭据优先级
 //! - 重置失败计数
 //! - 查询凭据余额
+//! - API Key 多用户管理
 //!
 //! # 使用
 //! ```ignore
@@ -16,6 +17,7 @@
 //! let admin_router = create_admin_router(admin_state);
 //! ```
 
+mod api_keys;
 mod error;
 mod handlers;
 mod middleware;

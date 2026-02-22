@@ -6,6 +6,7 @@ use axum::{
 };
 
 use super::{
+    api_keys::{create_api_key, delete_api_key, get_server_info, list_api_keys, update_api_key},
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_credential_balance,
         get_load_balancing_mode, reset_failure_count, set_credential_disabled,
@@ -15,22 +16,6 @@ use super::{
 };
 
 /// 创建 Admin API 路由
-///
-/// # 端点
-/// - `GET /credentials` - 获取所有凭据状态
-/// - `POST /credentials` - 添加新凭据
-/// - `DELETE /credentials/:id` - 删除凭据
-/// - `POST /credentials/:id/disabled` - 设置凭据禁用状态
-/// - `POST /credentials/:id/priority` - 设置凭据优先级
-/// - `POST /credentials/:id/reset` - 重置失败计数
-/// - `GET /credentials/:id/balance` - 获取凭据余额
-/// - `GET /config/load-balancing` - 获取负载均衡模式
-/// - `PUT /config/load-balancing` - 设置负载均衡模式
-///
-/// # 认证
-/// 需要 Admin API Key 认证，支持：
-/// - `x-api-key` header
-/// - `Authorization: Bearer <token>` header
 pub fn create_admin_router(state: AdminState) -> Router {
     Router::new()
         .route(
@@ -46,6 +31,11 @@ pub fn create_admin_router(state: AdminState) -> Router {
             "/config/load-balancing",
             get(get_load_balancing_mode).put(set_load_balancing_mode),
         )
+        // API Key 管理端点
+        .route("/api-keys", get(list_api_keys).post(create_api_key))
+        .route("/api-keys/{id}", put(update_api_key).delete(delete_api_key))
+        // 服务器信息
+        .route("/server-info", get(get_server_info))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             admin_auth_middleware,

@@ -10,8 +10,13 @@ import {
   updateCredential,
   getLoadBalancingMode,
   setLoadBalancingMode,
+  getServerInfo,
+  getApiKeys,
+  createApiKey,
+  updateApiKey,
+  deleteApiKey,
 } from '@/api/credentials'
-import type { AddCredentialRequest, UpdateCredentialRequest } from '@/types/api'
+import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 
 // 查询凭据列表
 export function useCredentials() {
@@ -116,6 +121,58 @@ export function useSetLoadBalancingMode() {
     mutationFn: setLoadBalancingMode,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loadBalancingMode'] })
+    },
+  })
+}
+
+// ============ API Key Hooks ============
+
+// 获取服务器信息
+export function useServerInfo() {
+  return useQuery({
+    queryKey: ['serverInfo'],
+    queryFn: getServerInfo,
+  })
+}
+
+// 查询 API Key 列表
+export function useApiKeys() {
+  return useQuery({
+    queryKey: ['apiKeys'],
+    queryFn: getApiKeys,
+  })
+}
+
+// 创建 API Key
+export function useCreateApiKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: CreateApiKeyRequest) => createApiKey(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+    },
+  })
+}
+
+// 更新 API Key
+export function useUpdateApiKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateApiKeyRequest }) =>
+      updateApiKey(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+    },
+  })
+}
+
+// 删除 API Key
+export function useDeleteApiKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteApiKey(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
     },
   })
 }

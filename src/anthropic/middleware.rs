@@ -12,16 +12,18 @@ use axum::{
 
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
+use crate::model::api_key::{ApiKeyAuthResult, ApiKeyManager};
 
 use super::types::ErrorResponse;
 
 /// 应用共享状态
 #[derive(Clone)]
 pub struct AppState {
-    /// API 密钥
+    /// 主 API 密钥（始终有效，不可禁用）
     pub api_key: String,
+    /// API Key 管理器（多用户 key）
+    pub api_key_manager: Option<Arc<ApiKeyManager>>,
     /// Kiro Provider（可选，用于实际 API 调用）
-    /// 内部使用 MultiTokenManager，已支持线程安全的多凭据管理
     pub kiro_provider: Option<Arc<KiroProvider>>,
     /// Profile ARN（可选，用于请求）
     pub profile_arn: Option<String>,
@@ -32,9 +34,16 @@ impl AppState {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
+            api_key_manager: None,
             kiro_provider: None,
             profile_arn: None,
         }
+    }
+
+    /// 设置 API Key 管理器
+    pub fn with_api_key_manager(mut self, manager: Arc<ApiKeyManager>) -> Self {
+        self.api_key_manager = Some(manager);
+        self
     }
 
     /// 设置 KiroProvider
@@ -51,18 +60,43 @@ impl AppState {
 }
 
 /// API Key 认证中间件
+///
+/// 认证优先级：
+/// 1. 主密钥（config.apiKey）→ 始终有效
+/// 2. 用户 key（api_keys.json）→ 检查 enabled + 过期时间
 pub async fn auth_middleware(
     State(state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    match auth::extract_api_key(&request) {
-        Some(key) if auth::constant_time_eq(&key, &state.api_key) => next.run(request).await,
-        _ => {
-            let error = ErrorResponse::authentication_error();
-            (StatusCode::UNAUTHORIZED, Json(error)).into_response()
+    let Some(key) = auth::extract_api_key(&request) else {
+        let error = ErrorResponse::authentication_error();
+        return (StatusCode::UNAUTHORIZED, Json(error)).into_response();
+    };
+
+    // 先检查主密钥
+    if auth::constant_time_eq(&key, &state.api_key) {
+        return next.run(request).await;
+    }
+
+    // 再检查用户 key
+    if let Some(manager) = &state.api_key_manager {
+        match manager.authenticate(&key) {
+            ApiKeyAuthResult::Valid => return next.run(request).await,
+            ApiKeyAuthResult::Disabled => {
+                let error = ErrorResponse::new("permission_error", "API key has been disabled");
+                return (StatusCode::FORBIDDEN, Json(error)).into_response();
+            }
+            ApiKeyAuthResult::Expired => {
+                let error = ErrorResponse::new("permission_error", "API key has expired");
+                return (StatusCode::FORBIDDEN, Json(error)).into_response();
+            }
+            ApiKeyAuthResult::NotFound => {}
         }
     }
+
+    let error = ErrorResponse::authentication_error();
+    (StatusCode::UNAUTHORIZED, Json(error)).into_response()
 }
 
 /// CORS 中间件层
