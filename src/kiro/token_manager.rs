@@ -527,7 +527,7 @@ pub struct MultiTokenManager {
     /// 凭据文件路径（用于回写）
     credentials_path: Option<PathBuf>,
     /// 是否为多凭据格式（数组格式才回写）
-    is_multiple_format: bool,
+    is_multiple_format: AtomicBool,
     /// 负载均衡模式（运行时可修改）
     load_balancing_mode: Mutex<String>,
     /// 最近一次统计持久化时间（用于 debounce）
@@ -640,7 +640,7 @@ impl MultiTokenManager {
             current_id: Mutex::new(initial_id),
             refresh_lock: TokioMutex::new(()),
             credentials_path,
-            is_multiple_format,
+            is_multiple_format: AtomicBool::new(is_multiple_format),
             load_balancing_mode: Mutex::new(load_balancing_mode),
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
@@ -974,7 +974,7 @@ impl MultiTokenManager {
         use anyhow::Context;
 
         // 仅多凭据格式才回写
-        if !self.is_multiple_format {
+        if !self.is_multiple_format.load(Ordering::Relaxed) {
             return Ok(false);
         }
 
@@ -1561,7 +1561,13 @@ impl MultiTokenManager {
             });
         }
 
-        // 6. 持久化
+        // 6. 自动升级为多凭据格式（添加凭据后必须能持久化）
+        if !self.is_multiple_format.load(Ordering::Relaxed) {
+            self.is_multiple_format.store(true, Ordering::Relaxed);
+            tracing::info!("已自动升级为多凭据格式以支持持久化");
+        }
+
+        // 7. 持久化
         self.persist_credentials()?;
 
         tracing::info!("成功添加凭据 #{}", new_id);
