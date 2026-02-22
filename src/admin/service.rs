@@ -15,6 +15,7 @@ use super::error::AdminServiceError;
 use super::types::{
     AddCredentialRequest, AddCredentialResponse, BalanceResponse, CredentialStatusItem,
     CredentialsStatusResponse, LoadBalancingModeResponse, SetLoadBalancingModeRequest,
+    UpdateCredentialRequest,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -246,6 +247,27 @@ impl AdminService {
         Ok(())
     }
 
+    /// 更新凭据配置
+    pub async fn update_credential(
+        &self,
+        id: u64,
+        req: UpdateCredentialRequest,
+    ) -> Result<(), AdminServiceError> {
+        self.token_manager
+            .update_credential(id, req)
+            .await
+            .map_err(|e| self.classify_update_error(e, id))?;
+
+        // 清理该凭据的余额缓存（配置变更后需要重新获取）
+        {
+            let mut cache = self.balance_cache.lock();
+            cache.remove(&id);
+        }
+        self.save_balance_cache();
+
+        Ok(())
+    }
+
     /// 获取负载均衡模式
     pub fn get_load_balancing_mode(&self) -> LoadBalancingModeResponse {
         LoadBalancingModeResponse {
@@ -409,6 +431,23 @@ impl AdminService {
             AdminServiceError::InvalidCredential(msg)
         } else {
             AdminServiceError::InternalError(msg)
+        }
+    }
+
+    /// 分类更新凭据错误
+    fn classify_update_error(&self, e: anyhow::Error, id: u64) -> AdminServiceError {
+        let msg = e.to_string();
+        if msg.contains("不存在") {
+            AdminServiceError::NotFound { id }
+        } else if msg.contains("凭证已过期或无效")
+            || msg.contains("权限不足")
+            || msg.contains("已被限流")
+            || msg.contains("error trying to connect")
+            || msg.contains("timeout")
+        {
+            AdminServiceError::UpstreamError(msg)
+        } else {
+            AdminServiceError::InvalidCredential(msg)
         }
     }
 }

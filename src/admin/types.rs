@@ -136,6 +136,41 @@ pub struct AddCredentialResponse {
     pub email: Option<String>,
 }
 
+/// 更新凭据请求（所有字段可选，只更新提供的字段）
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCredentialRequest {
+    /// 刷新令牌（可选，更新后会重新验证）
+    pub refresh_token: Option<String>,
+
+    /// 认证方式（可选）
+    pub auth_method: Option<String>,
+
+    /// OIDC Client ID（可选）
+    pub client_id: Option<String>,
+
+    /// OIDC Client Secret（可选）
+    pub client_secret: Option<String>,
+
+    /// 凭据级 Auth Region（用于 Token 刷新）
+    pub auth_region: Option<String>,
+
+    /// 凭据级 API Region（用于 API 请求）
+    pub api_region: Option<String>,
+
+    /// 凭据级 Machine ID（可选）
+    pub machine_id: Option<String>,
+
+    /// 凭据级代理 URL（可选）
+    pub proxy_url: Option<String>,
+
+    /// 凭据级代理认证用户名（可选）
+    pub proxy_username: Option<String>,
+
+    /// 凭据级代理认证密码（可选）
+    pub proxy_password: Option<String>,
+}
+
 // ============ 余额查询 ============
 
 /// 余额查询响应

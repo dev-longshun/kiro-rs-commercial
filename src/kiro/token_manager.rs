@@ -237,6 +237,26 @@ async fn refresh_social_token(
 /// IdC Token 刷新所需的 x-amz-user-agent header
 const IDC_AMZ_USER_AGENT: &str = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
 
+/// Kiro auth token 文件的 region 字段结构
+#[derive(Debug, Deserialize)]
+struct KiroAuthTokenFile {
+    #[serde(default)]
+    region: Option<String>,
+}
+
+/// 从 ~/.aws/sso/cache/kiro-auth-token.json 读取 region 字段
+fn read_region_from_kiro_auth_token() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let path = home.join(".aws/sso/cache/kiro-auth-token.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let token_file: KiroAuthTokenFile = serde_json::from_str(&content).ok()?;
+    let region = token_file.region.filter(|r| !r.is_empty());
+    if let Some(ref r) = region {
+        tracing::debug!("从 kiro-auth-token.json 读取到 region: {}", r);
+    }
+    region
+}
+
 /// 刷新 IdC Token (AWS SSO OIDC)
 async fn refresh_idc_token(
     credentials: &KiroCredentials,
@@ -255,8 +275,24 @@ async fn refresh_idc_token(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("IdC 刷新需要 clientSecret"))?;
 
-    // 优先级：凭据.auth_region > 凭据.region > config.auth_region > config.region
-    let region = credentials.effective_auth_region(config);
+    // Region 优先级：凭据.auth_region > 凭据.region > config.auth_region > config.region > kiro-auth-token.json.region
+    // 先尝试凭据/配置链，如果最终是默认的 us-east-1 则再看 token 文件
+    let region_from_chain = credentials.effective_auth_region(config);
+    let token_file_region = read_region_from_kiro_auth_token();
+    let region = if let Some(ref file_region) = token_file_region {
+        // 如果凭据/配置链中有显式配置（非默认值），优先使用；否则用 token 文件的 region
+        if credentials.auth_region.is_some()
+            || credentials.region.is_some()
+            || config.auth_region.is_some()
+        {
+            region_from_chain
+        } else {
+            tracing::info!("使用 kiro-auth-token.json 的 region: {}", file_region);
+            file_region.as_str()
+        }
+    } else {
+        region_from_chain
+    };
     let refresh_url = format!("https://oidc.{}.amazonaws.com/token", region);
 
     let client = build_client(proxy, 60, config.tls_backend)?;
@@ -1530,6 +1566,124 @@ impl MultiTokenManager {
 
         tracing::info!("成功添加凭据 #{}", new_id);
         Ok(new_id)
+    }
+
+    /// 更新凭据配置（Admin API）
+    ///
+    /// 只更新提供的字段，不会触发 token 刷新验证（除非 refreshToken 变更）
+    pub async fn update_credential(
+        &self,
+        id: u64,
+        update: crate::admin::types::UpdateCredentialRequest,
+    ) -> anyhow::Result<()> {
+        // 检查凭据是否存在
+        let exists = {
+            let entries = self.entries.lock();
+            entries.iter().any(|e| e.id == id)
+        };
+        if !exists {
+            anyhow::bail!("凭据不存在: {}", id);
+        }
+
+        // 如果 refreshToken 变更，需要重新验证
+        let needs_revalidation = update.refresh_token.is_some();
+
+        if needs_revalidation {
+            // 先构建临时凭据用于验证
+            let temp_cred = {
+                let entries = self.entries.lock();
+                let entry = entries.iter().find(|e| e.id == id).unwrap();
+                let mut cred = entry.credentials.clone();
+                if let Some(ref rt) = update.refresh_token {
+                    cred.refresh_token = Some(rt.clone());
+                }
+                if let Some(ref am) = update.auth_method {
+                    cred.auth_method = Some(am.clone());
+                }
+                if let Some(ref ci) = update.client_id {
+                    cred.client_id = Some(ci.clone());
+                }
+                if let Some(ref cs) = update.client_secret {
+                    cred.client_secret = Some(cs.clone());
+                }
+                if let Some(ref ar) = update.auth_region {
+                    cred.auth_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+                }
+                if let Some(ref ar) = update.api_region {
+                    cred.api_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+                }
+                cred
+            };
+
+            let effective_proxy = temp_cred.effective_proxy(self.proxy.as_ref());
+            let validated =
+                refresh_token(&temp_cred, &self.config, effective_proxy.as_ref()).await?;
+
+            // 更新凭据（保留验证后的 access_token 和 expires_at）
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.credentials.access_token = validated.access_token;
+                entry.credentials.expires_at = validated.expires_at;
+                if let Some(profile_arn) = validated.profile_arn {
+                    entry.credentials.profile_arn = Some(profile_arn);
+                }
+                if let Some(rt) = validated.refresh_token {
+                    entry.credentials.refresh_token = Some(rt);
+                }
+                // 应用用户更新的字段
+                Self::apply_update_fields(&mut entry.credentials, &update);
+                // 重置失败计数
+                entry.failure_count = 0;
+            }
+        } else {
+            // 不涉及 refreshToken 变更，直接更新配置字段
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                Self::apply_update_fields(&mut entry.credentials, &update);
+            }
+        }
+
+        self.persist_credentials()?;
+        tracing::info!("成功更新凭据 #{}", id);
+        Ok(())
+    }
+
+    /// 将 UpdateCredentialRequest 中的非 None 字段应用到凭据
+    fn apply_update_fields(
+        cred: &mut KiroCredentials,
+        update: &crate::admin::types::UpdateCredentialRequest,
+    ) {
+        if let Some(ref am) = update.auth_method {
+            cred.auth_method = Some(if am.eq_ignore_ascii_case("builder-id") || am.eq_ignore_ascii_case("iam") {
+                "idc".to_string()
+            } else {
+                am.clone()
+            });
+        }
+        if let Some(ref ci) = update.client_id {
+            cred.client_id = if ci.is_empty() { None } else { Some(ci.clone()) };
+        }
+        if let Some(ref cs) = update.client_secret {
+            cred.client_secret = if cs.is_empty() { None } else { Some(cs.clone()) };
+        }
+        if let Some(ref ar) = update.auth_region {
+            cred.auth_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+        }
+        if let Some(ref ar) = update.api_region {
+            cred.api_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+        }
+        if let Some(ref mi) = update.machine_id {
+            cred.machine_id = if mi.is_empty() { None } else { Some(mi.clone()) };
+        }
+        if let Some(ref pu) = update.proxy_url {
+            cred.proxy_url = if pu.is_empty() { None } else { Some(pu.clone()) };
+        }
+        if let Some(ref pu) = update.proxy_username {
+            cred.proxy_username = if pu.is_empty() { None } else { Some(pu.clone()) };
+        }
+        if let Some(ref pp) = update.proxy_password {
+            cred.proxy_password = if pp.is_empty() { None } else { Some(pp.clone()) };
+        }
     }
 
     /// 删除凭据（Admin API）

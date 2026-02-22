@@ -73,6 +73,20 @@ export interface AddCredentialRequest {
   proxyPassword?: string
 }
 
+// 更新凭据请求
+export interface UpdateCredentialRequest {
+  refreshToken?: string
+  authMethod?: string
+  clientId?: string
+  clientSecret?: string
+  authRegion?: string
+  apiRegion?: string
+  machineId?: string
+  proxyUrl?: string
+  proxyUsername?: string
+  proxyPassword?: string
+}
+
 // 添加凭据响应
 export interface AddCredentialResponse {
   success: boolean
