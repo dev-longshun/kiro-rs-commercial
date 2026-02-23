@@ -115,3 +115,21 @@ export interface UpdateApiKeyRequest {
   enabled?: boolean
   expiresAt?: string | null
 }
+
+// API Key 用量汇总
+export interface UsageSummary {
+  apiKeyId: number
+  totalRequests: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCost: number
+  byModel: ModelUsage[]
+}
+
+export interface ModelUsage {
+  model: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cost: number
+}

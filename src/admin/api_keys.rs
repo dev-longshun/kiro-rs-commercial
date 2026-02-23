@@ -106,3 +106,45 @@ pub async fn delete_api_key(
         }
     }
 }
+
+/// GET /api/admin/api-keys/usage
+/// 获取所有 API Key 的用量概览
+pub async fn get_all_usage(State(state): State<AdminState>) -> impl IntoResponse {
+    let Some(tracker) = &state.usage_tracker else {
+        let error = AdminErrorResponse::internal_error("用量追踪未启用");
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+    };
+    Json(tracker.get_all_summaries()).into_response()
+}
+
+/// GET /api/admin/api-keys/:id/usage
+/// 获取单个 API Key 的用量汇总
+pub async fn get_key_usage(
+    State(state): State<AdminState>,
+    Path(id): Path<u32>,
+) -> impl IntoResponse {
+    let Some(tracker) = &state.usage_tracker else {
+        let error = AdminErrorResponse::internal_error("用量追踪未启用");
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+    };
+    Json(tracker.get_summary(id)).into_response()
+}
+
+/// DELETE /api/admin/api-keys/:id/usage
+/// 重置单个 API Key 的用量记录
+pub async fn reset_key_usage(
+    State(state): State<AdminState>,
+    Path(id): Path<u32>,
+) -> impl IntoResponse {
+    let Some(tracker) = &state.usage_tracker else {
+        let error = AdminErrorResponse::internal_error("用量追踪未启用");
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response();
+    };
+    match tracker.reset(id) {
+        Ok(()) => Json(SuccessResponse::new(format!("API Key #{} 用量已重置", id))).into_response(),
+        Err(e) => {
+            let error = AdminErrorResponse::internal_error(e.to_string());
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()
+        }
+    }
+}

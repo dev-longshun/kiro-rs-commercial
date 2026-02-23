@@ -46,37 +46,19 @@
 
 ### 4. 输出形式
 
-必须输出**三个代码块**，方便在 Git GUI 工具中分别复制：
+输出**一个代码块**，包含完整的 commit 信息（Header + Body）。
 
-**代码块 1 - 完整版**：Header + Body 的完整 commit 信息
+**输出后必须主动询问用户是否执行提交**（如"确认无误，是否执行提交？"），不要等用户主动说"执行"。
 
-**代码块 2 - Summary**：只有 Header 行（用于 Git GUI 的 "Commit summary" 输入框）
-
-**代码块 3 - Description**：只有 Body 部分（用于 Git GUI 的 "Description" 输入框，如果没有 Body 则输出"无"）
+**禁止**以 `git commit -m "..."` 命令格式输出，只输出纯 commit 信息内容。
 
 commit 信息除了 type 和 scope 部分可以使用英文，其余部分需使用简体中文书写
 
 ### 5. 输出示例
 
-**完整版**：
-
 ```
 feat(admin): ✨ 添加 credential 批量导入功能
 
-- 新增 ImportCredentialsRequest 类型定义
-- 在 admin handler 中实现批量导入接口
-- 前端添加导入对话框组件
-```
-
-**Summary**：
-
-```
-feat(admin): ✨ 添加 credential 批量导入功能
-```
-
-**Description**：
-
-```
 - 新增 ImportCredentialsRequest 类型定义
 - 在 admin handler 中实现批量导入接口
 - 前端添加导入对话框组件
@@ -93,6 +75,7 @@ feat(admin): ✨ 添加 credential 批量导入功能
 - **严禁遗漏 diff 中显示的功能性文件变更**
 - 只描述最终交付的功能和改进
 - **commit 信息必须与 git diff 中的功能性变更完全对应**
+- **禁止附加任何辅助编程标识信息**（如 Co-Authored-By、AI 工具署名等），提交内容必须与展示给用户审核的内容完全一致
 
 ## Commit 信息增强规范
 

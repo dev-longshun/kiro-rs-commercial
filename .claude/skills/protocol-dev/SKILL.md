@@ -48,9 +48,10 @@ user-invocable: false
 1. **立即执行** `git diff --name-only HEAD` 和 `git diff HEAD --stat`
 2. 根据实际 diff 结果分析变更
 3. 检查是否包含调试日志，如有则询问用户是否清理
-4. 生成符合规范的 commit 信息（三个代码块格式）
+4. 生成符合规范的 commit 信息
+5. **主动询问用户是否执行提交**（如"确认无误，是否执行提交？"）
 
-**禁止执行 `git commit`**：只输出 commit 信息供用户复制，由用户自行提交。
+**`git commit` 流程**：先输出 commit 信息供用户审核，然后主动询问是否执行提交，用户确认后再执行，提交内容必须与展示内容完全一致，禁止附加任何辅助编程标识信息（如 Co-Authored-By 等）。
 
 **详细规范**：生成前必须先读取 [references/commit-guide.md](references/commit-guide.md)
 
@@ -105,7 +106,7 @@ user-invocable: false
 2. 使用 `--no-commit --no-ff` 执行合并
 3. 有冲突：**停下分析 → 给方案 → 等授权 → 解冲突 → 验证**
 4. 无冲突：直接进入 commit 信息生成
-5. 生成 commit 信息（三个代码块格式），**禁止执行 `git commit`**
+5. 生成 commit 信息（三个代码块格式），用户确认后再执行提交
 
 **详细规范**：合并前必须先读取 [references/merge-guide.md](references/merge-guide.md)、[references/commit-guide.md](references/commit-guide.md)
 

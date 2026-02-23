@@ -6,7 +6,7 @@ use axum::{
 };
 
 use super::{
-    api_keys::{create_api_key, delete_api_key, get_server_info, list_api_keys, update_api_key},
+    api_keys::{create_api_key, delete_api_key, get_server_info, list_api_keys, update_api_key, get_all_usage, get_key_usage, reset_key_usage},
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_credential_balance,
         get_load_balancing_mode, reset_failure_count, set_credential_disabled,
@@ -33,7 +33,9 @@ pub fn create_admin_router(state: AdminState) -> Router {
         )
         // API Key 管理端点
         .route("/api-keys", get(list_api_keys).post(create_api_key))
+        .route("/api-keys/usage", get(get_all_usage))
         .route("/api-keys/{id}", put(update_api_key).delete(delete_api_key))
+        .route("/api-keys/{id}/usage", get(get_key_usage).delete(reset_key_usage))
         // 服务器信息
         .route("/server-info", get(get_server_info))
         .layer(middleware::from_fn_with_state(

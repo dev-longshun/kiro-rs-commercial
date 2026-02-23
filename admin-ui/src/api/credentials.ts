@@ -12,6 +12,7 @@ import type {
   ApiKeyItem,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
+  UsageSummary,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -138,5 +139,25 @@ export async function updateApiKey(id: number, req: UpdateApiKeyRequest): Promis
 // 删除 API Key
 export async function deleteApiKey(id: number): Promise<SuccessResponse> {
   const { data } = await api.delete<SuccessResponse>(`/api-keys/${id}`)
+  return data
+}
+
+// ============ API Key 用量 ============
+
+// 获取所有 API Key 用量概览
+export async function getAllUsage(): Promise<UsageSummary[]> {
+  const { data } = await api.get<UsageSummary[]>('/api-keys/usage')
+  return data
+}
+
+// 获取单个 API Key 用量
+export async function getKeyUsage(id: number): Promise<UsageSummary> {
+  const { data } = await api.get<UsageSummary>(`/api-keys/${id}/usage`)
+  return data
+}
+
+// 重置单个 API Key 用量
+export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
+  const { data } = await api.delete<SuccessResponse>(`/api-keys/${id}/usage`)
   return data
 }

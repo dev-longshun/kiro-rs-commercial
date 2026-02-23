@@ -62,8 +62,8 @@ fn generate_api_key() -> String {
 
 /// API Key 认证结果
 pub enum ApiKeyAuthResult {
-    /// 认证通过
-    Valid,
+    /// 认证通过，携带 key ID 和名称
+    Valid { id: u32, name: String },
     /// Key 已被禁用
     Disabled,
     /// Key 已过期
@@ -119,7 +119,10 @@ impl ApiKeyManager {
                 } else if api_key.is_expired() {
                     ApiKeyAuthResult::Expired
                 } else {
-                    ApiKeyAuthResult::Valid
+                    ApiKeyAuthResult::Valid {
+                        id: api_key.id,
+                        name: api_key.name.clone(),
+                    }
                 }
             }
             None => ApiKeyAuthResult::NotFound,

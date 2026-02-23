@@ -15,6 +15,8 @@ import {
   createApiKey,
   updateApiKey,
   deleteApiKey,
+  getAllUsage,
+  resetKeyUsage,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 
@@ -173,6 +175,28 @@ export function useDeleteApiKey() {
     mutationFn: (id: number) => deleteApiKey(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+    },
+  })
+}
+
+// ============ API Key 用量 Hooks ============
+
+// 查询所有 API Key 用量
+export function useAllUsage() {
+  return useQuery({
+    queryKey: ['apiKeyUsage'],
+    queryFn: getAllUsage,
+    refetchInterval: 60000, // 每 60 秒刷新
+  })
+}
+
+// 重置 API Key 用量
+export function useResetKeyUsage() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => resetKeyUsage(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeyUsage'] })
     },
   })
 }

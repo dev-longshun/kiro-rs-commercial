@@ -16,6 +16,7 @@ use kiro::token_manager::MultiTokenManager;
 use model::api_key::ApiKeyManager;
 use model::arg::Args;
 use model::config::Config;
+use model::usage::UsageTracker;
 
 #[tokio::main]
 async fn main() {
@@ -119,8 +120,22 @@ async fn main() {
     let api_key_manager = Arc::new(api_key_manager);
     tracing::info!("已加载 {} 个用户 API Key", api_key_manager.list().len());
 
+    // 加载用量追踪器（api_key_usage.json 与配置文件同目录）
+    let usage_path = std::path::Path::new(&config_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("api_key_usage.json");
+    let usage_tracker = UsageTracker::load(&usage_path).unwrap_or_else(|e| {
+        tracing::error!("加载用量记录失败: {}", e);
+        std::process::exit(1);
+    });
+    let usage_tracker = Arc::new(usage_tracker);
+    tracing::info!("用量追踪已启用: {}", usage_path.display());
+
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key);
-    anthropic_app_state = anthropic_app_state.with_api_key_manager(api_key_manager.clone());
+    anthropic_app_state = anthropic_app_state
+        .with_api_key_manager(api_key_manager.clone())
+        .with_usage_tracker(usage_tracker.clone());
 
     let anthropic_app = anthropic::create_router_with_provider_and_state(
         anthropic_app_state,
@@ -144,7 +159,8 @@ async fn main() {
             let admin_service = admin::AdminService::new(token_manager.clone());
             let admin_state = admin::AdminState::new(admin_key, admin_service)
                 .with_master_api_key(&api_key)
-                .with_api_key_manager(api_key_manager.clone());
+                .with_api_key_manager(api_key_manager.clone())
+                .with_usage_tracker(usage_tracker.clone());
             let admin_app = admin::create_admin_router(admin_state);
 
             // 创建 Admin UI 路由

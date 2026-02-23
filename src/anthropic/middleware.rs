@@ -13,8 +13,16 @@ use axum::{
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
 use crate::model::api_key::{ApiKeyAuthResult, ApiKeyManager};
+use crate::model::usage::UsageTracker;
 
 use super::types::ErrorResponse;
+
+/// API Key 身份标识（注入到 request extensions）
+#[derive(Debug, Clone)]
+pub struct ApiKeyIdentity {
+    /// Key ID（0 = 主密钥）
+    pub key_id: u32,
+}
 
 /// 应用共享状态
 #[derive(Clone)]
@@ -27,6 +35,8 @@ pub struct AppState {
     pub kiro_provider: Option<Arc<KiroProvider>>,
     /// Profile ARN（可选，用于请求）
     pub profile_arn: Option<String>,
+    /// 用量追踪器
+    pub usage_tracker: Option<Arc<UsageTracker>>,
 }
 
 impl AppState {
@@ -37,6 +47,7 @@ impl AppState {
             api_key_manager: None,
             kiro_provider: None,
             profile_arn: None,
+            usage_tracker: None,
         }
     }
 
@@ -55,6 +66,12 @@ impl AppState {
     /// 设置 Profile ARN
     pub fn with_profile_arn(mut self, arn: impl Into<String>) -> Self {
         self.profile_arn = Some(arn.into());
+        self
+    }
+
+    /// 设置用量追踪器
+    pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
+        self.usage_tracker = Some(tracker);
         self
     }
 }
@@ -76,13 +93,23 @@ pub async fn auth_middleware(
 
     // 先检查主密钥
     if auth::constant_time_eq(&key, &state.api_key) {
+        let mut request = request;
+        request
+            .extensions_mut()
+            .insert(ApiKeyIdentity { key_id: 0 });
         return next.run(request).await;
     }
 
     // 再检查用户 key
     if let Some(manager) = &state.api_key_manager {
         match manager.authenticate(&key) {
-            ApiKeyAuthResult::Valid => return next.run(request).await,
+            ApiKeyAuthResult::Valid { id, .. } => {
+                let mut request = request;
+                request
+                    .extensions_mut()
+                    .insert(ApiKeyIdentity { key_id: id });
+                return next.run(request).await;
+            }
             ApiKeyAuthResult::Disabled => {
                 let error = ErrorResponse::new("permission_error", "API key has been disabled");
                 return (StatusCode::FORBIDDEN, Json(error)).into_response();

@@ -3,11 +3,13 @@
 //! 实现 Kiro → Anthropic 流式响应转换和 SSE 状态管理
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::kiro::model::events::Event;
+use crate::model::usage::UsageTracker;
 
 /// 找到小于等于目标位置的最近有效UTF-8字符边界
 ///
@@ -487,6 +489,10 @@ pub struct StreamContext {
     /// 是否需要剥离 thinking 内容开头的换行符
     /// 模型输出 `<thinking>\n` 时，`\n` 可能与标签在同一 chunk 或下一 chunk
     strip_thinking_leading_newline: bool,
+    /// 用量追踪器（可选）
+    usage_tracker: Option<Arc<UsageTracker>>,
+    /// API Key ID（用于用量记录）
+    api_key_id: Option<u32>,
 }
 
 impl StreamContext {
@@ -511,7 +517,20 @@ impl StreamContext {
             thinking_block_index: None,
             text_block_index: None,
             strip_thinking_leading_newline: false,
+            usage_tracker: None,
+            api_key_id: None,
         }
+    }
+
+    /// 设置用量追踪
+    pub fn with_usage_tracking(
+        mut self,
+        tracker: Option<Arc<UsageTracker>>,
+        api_key_id: Option<u32>,
+    ) -> Self {
+        self.usage_tracker = tracker;
+        self.api_key_id = api_key_id;
+        self
     }
 
     /// 生成 message_start 事件
@@ -1056,6 +1075,11 @@ impl StreamContext {
         // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
         let final_input_tokens = self.context_input_tokens.unwrap_or(self.input_tokens);
 
+        // 记录用量
+        if let (Some(tracker), Some(key_id)) = (&self.usage_tracker, self.api_key_id) {
+            tracker.record(key_id, self.model.clone(), final_input_tokens, self.output_tokens);
+        }
+
         // 生成最终事件
         events.extend(
             self.state_manager
@@ -1101,6 +1125,16 @@ impl BufferedStreamContext {
             estimated_input_tokens,
             initial_events_generated: false,
         }
+    }
+
+    /// 设置用量追踪
+    pub fn with_usage_tracking(
+        mut self,
+        tracker: Option<Arc<UsageTracker>>,
+        api_key_id: Option<u32>,
+    ) -> Self {
+        self.inner = self.inner.with_usage_tracking(tracker, api_key_id);
+        self
     }
 
     /// 处理 Kiro 事件并缓冲结果

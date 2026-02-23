@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Plus, Pencil, Trash2, Key, Check, Clock } from 'lucide-react'
+import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,9 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useServerInfo } from '@/hooks/use-credentials'
+import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useServerInfo, useAllUsage, useResetKeyUsage } from '@/hooks/use-credentials'
 import { extractErrorMessage } from '@/lib/utils'
-import type { ApiKeyItem } from '@/types/api'
+import type { ApiKeyItem, UsageSummary } from '@/types/api'
 
 export function ApiKeysPanel() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -56,9 +56,33 @@ export function ApiKeysPanel() {
 
   const { data: apiKeys, isLoading } = useApiKeys()
   const { data: serverInfo } = useServerInfo()
+  const { data: usageData } = useAllUsage()
   const { mutate: createKey, isPending: isCreating } = useCreateApiKey()
   const { mutate: updateKey } = useUpdateApiKey()
   const { mutate: deleteKey } = useDeleteApiKey()
+  const { mutate: resetUsage } = useResetKeyUsage()
+
+  // 构建 key_id -> usage 的映射
+  const usageMap = new Map<number, UsageSummary>()
+  usageData?.forEach((u) => usageMap.set(u.apiKeyId, u))
+
+  const formatTokens = (tokens: number): string => {
+    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`
+    return tokens.toString()
+  }
+
+  const formatCost = (cost: number): string => {
+    return `$${cost.toFixed(4)}`
+  }
+
+  const handleResetUsage = (key: ApiKeyItem) => {
+    if (!confirm(`确定要重置 "${key.name}" 的用量记录吗？`)) return
+    resetUsage(key.id, {
+      onSuccess: () => toast.success('用量已重置'),
+      onError: (err) => toast.error(extractErrorMessage(err)),
+    })
+  }
   const copyToClipboard = async (text: string, target: 'url' | 'master' | number) => {
     await navigator.clipboard.writeText(text)
     if (target === 'url') {
@@ -222,6 +246,7 @@ export function ApiKeysPanel() {
         <div className="grid gap-3">
           {apiKeys.map((apiKey) => {
             const status = getKeyStatus(apiKey)
+            const usage = usageMap.get(apiKey.id)
             return (
               <Card key={apiKey.id} className={status !== 'active' ? 'opacity-60' : ''}>
                 <CardContent className="py-3 px-4">
@@ -242,6 +267,30 @@ export function ApiKeysPanel() {
                               <Clock className="h-3 w-3" />
                               到期: {formatDate(apiKey.expiresAt)}
                             </span>
+                          )}
+                        </div>
+                        {/* 用量信息（始终显示） */}
+                        <div className="flex items-center gap-3 mt-1.5 text-xs">
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <BarChart3 className="h-3 w-3" />
+                            {usage?.totalRequests ?? 0} 次请求
+                          </span>
+                          <span className="text-muted-foreground">
+                            入 {formatTokens(usage?.totalInputTokens ?? 0)} / 出 {formatTokens(usage?.totalOutputTokens ?? 0)}
+                          </span>
+                          <span className="font-medium text-orange-600 dark:text-orange-400">
+                            {formatCost(usage?.totalCost ?? 0)}
+                          </span>
+                          {usage && usage.totalRequests > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => handleResetUsage(apiKey)}
+                              title="重置用量"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </Button>
                           )}
                         </div>
                       </div>

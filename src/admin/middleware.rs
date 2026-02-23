@@ -14,6 +14,7 @@ use super::service::AdminService;
 use super::types::AdminErrorResponse;
 use crate::common::auth;
 use crate::model::api_key::ApiKeyManager;
+use crate::model::usage::UsageTracker;
 
 /// Admin API 共享状态
 #[derive(Clone)]
@@ -26,6 +27,8 @@ pub struct AdminState {
     pub service: Arc<AdminService>,
     /// API Key 管理器
     pub api_key_manager: Option<Arc<ApiKeyManager>>,
+    /// 用量追踪器
+    pub usage_tracker: Option<Arc<UsageTracker>>,
 }
 
 impl AdminState {
@@ -35,6 +38,7 @@ impl AdminState {
             master_api_key: None,
             service: Arc::new(service),
             api_key_manager: None,
+            usage_tracker: None,
         }
     }
 
@@ -45,6 +49,11 @@ impl AdminState {
 
     pub fn with_api_key_manager(mut self, manager: Arc<ApiKeyManager>) -> Self {
         self.api_key_manager = Some(manager);
+        self
+    }
+
+    pub fn with_usage_tracker(mut self, tracker: Arc<UsageTracker>) -> Self {
+        self.usage_tracker = Some(tracker);
         self
     }
 }
