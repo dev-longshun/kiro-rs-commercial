@@ -215,7 +215,7 @@ export function ApiKeysPanel() {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground">API Base URL</div>
-              <code className="text-sm">{window.location.origin}</code>
+              <code className="text-sm break-all">{window.location.origin}</code>
             </div>
             <Button
               variant="ghost"
@@ -267,8 +267,8 @@ export function ApiKeysPanel() {
             const usage = usageMap.get(apiKey.id)
             return (
               <Card key={apiKey.id} className={status !== 'active' ? 'opacity-60' : ''}>
-                <CardContent className="py-3 px-4">
-                  <div className="flex items-center justify-between">
+                <CardContent className="py-3 px-3 sm:px-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -277,7 +277,7 @@ export function ApiKeysPanel() {
                             {status === 'active' ? '启用' : status === 'expired' ? '已过期' : '已禁用'}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
                           <code>{maskKey(apiKey.key)}</code>
                           <span>创建: {formatDate(apiKey.createdAt)}</span>
                           {apiKey.spendingLimit != null ? (
@@ -293,7 +293,7 @@ export function ApiKeysPanel() {
                           ) : null}
                         </div>
                         {/* 用量信息（始终显示） */}
-                        <div className="flex items-center gap-3 mt-1.5 text-xs">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs">
                           <span className="flex items-center gap-1 text-muted-foreground">
                             <BarChart3 className="h-3 w-3" />
                             {usage?.totalRequests ?? 0} 次请求
@@ -318,7 +318,7 @@ export function ApiKeysPanel() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 ml-2">
+                    <div className="flex items-center gap-1 sm:ml-2 self-end sm:self-auto">
                       <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`Base URL: ${window.location.origin}\nAPI Key: ${apiKey.key}`, apiKey.id)} title="复制 URL 和 Key">
                         {copiedId === apiKey.id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                       </Button>

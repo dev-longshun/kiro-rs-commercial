@@ -494,40 +494,41 @@ export function Dashboard({ onLogout }: DashboardProps) {
     <div className="min-h-screen bg-background">
       {/* 顶部导航 */}
       <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 items-center justify-between px-4 md:px-8">
-          <div className="flex items-center gap-4">
+        <div className="container flex h-14 items-center justify-between px-3 sm:px-4 md:px-8">
+          <div className="flex items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-2">
               <Server className="h-5 w-5" />
-              <span className="font-semibold">Kiro Admin</span>
+              <span className="font-semibold hidden sm:inline">Kiro Admin</span>
             </div>
             <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
               <Button
                 variant={activeTab === 'credentials' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setActiveTab('credentials')}
-                className="h-7 px-3 text-xs"
+                className="h-7 px-2 sm:px-3 text-xs"
               >
-                <Server className="h-3 w-3 mr-1" />
-                凭据管理
+                <Server className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">凭据管理</span>
               </Button>
               <Button
                 variant={activeTab === 'apikeys' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setActiveTab('apikeys')}
-                className="h-7 px-3 text-xs"
+                className="h-7 px-2 sm:px-3 text-xs"
               >
-                <Key className="h-3 w-3 mr-1" />
-                API Keys
+                <Key className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">API Keys</span>
               </Button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={handleToggleLoadBalancing}
               disabled={isLoadingMode || isSettingMode}
               title="切换负载均衡模式"
+              className="hidden sm:inline-flex"
             >
               {isLoadingMode ? '加载中...' : (loadBalancingData?.mode === 'priority' ? '优先级模式' : '均衡负载')}
             </Button>
@@ -545,7 +546,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       </header>
 
       {/* 主内容 */}
-      <main className="container mx-auto px-4 md:px-8 py-6">
+      <main className="container mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6">
         {activeTab === 'apikeys' ? (
           <ApiKeysPanel />
         ) : (
@@ -601,16 +602,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </div>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {selectedIds.size > 0 && (
                 <>
                   <Button onClick={handleBatchVerify} size="sm" variant="outline">
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    批量验活
+                    <CheckCircle2 className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">批量验活</span>
                   </Button>
                   <Button onClick={handleBatchResetFailure} size="sm" variant="outline">
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    恢复异常
+                    <RotateCcw className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">恢复异常</span>
                   </Button>
                   <Button
                     onClick={handleBatchDelete}
@@ -619,8 +620,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     disabled={selectedDisabledCount === 0}
                     title={selectedDisabledCount === 0 ? '只能删除已禁用凭据' : undefined}
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    批量删除
+                    <Trash2 className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">批量删除</span>
                   </Button>
                 </>
               )}
@@ -637,8 +638,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   variant="outline"
                   disabled={queryingInfo}
                 >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${queryingInfo ? 'animate-spin' : ''}`} />
-                  {queryingInfo ? `查询中... ${queryInfoProgress.current}/${queryInfoProgress.total}` : '查询信息'}
+                  <RefreshCw className={`h-4 w-4 sm:mr-2 ${queryingInfo ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">{queryingInfo ? `查询中... ${queryInfoProgress.current}/${queryInfoProgress.total}` : '查询信息'}</span>
                 </Button>
               )}
               {data?.credentials && data.credentials.length > 0 && (
@@ -650,21 +651,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   disabled={disabledCredentialCount === 0}
                   title={disabledCredentialCount === 0 ? '没有可清除的已禁用凭据' : undefined}
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  清除已禁用
+                  <Trash2 className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">清除已禁用</span>
                 </Button>
               )}
               <Button onClick={() => setKamImportDialogOpen(true)} size="sm" variant="outline">
-                <FileUp className="h-4 w-4 mr-2" />
-                Kiro Account Manager 导入
+                <FileUp className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Kiro Account Manager 导入</span>
               </Button>
               <Button onClick={() => setBatchImportDialogOpen(true)} size="sm" variant="outline">
-                <Upload className="h-4 w-4 mr-2" />
-                批量导入
+                <Upload className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">批量导入</span>
               </Button>
               <Button onClick={() => setAddDialogOpen(true)} size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                添加凭据
+                <Plus className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">添加凭据</span>
               </Button>
             </div>
           </div>
@@ -692,7 +693,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
               {/* 分页控件 */}
               {totalPages > 1 && (
-                <div className="flex justify-center items-center gap-4 mt-6">
+                <div className="flex justify-center items-center gap-2 sm:gap-4 mt-6">
                   <Button
                     variant="outline"
                     size="sm"
@@ -702,7 +703,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     上一页
                   </Button>
                   <span className="text-sm text-muted-foreground">
-                    第 {currentPage} / {totalPages} 页（共 {data?.credentials.length} 个凭据）
+                    <span className="sm:hidden">{currentPage}/{totalPages}</span>
+                    <span className="hidden sm:inline">第 {currentPage} / {totalPages} 页（共 {data?.credentials.length} 个凭据）</span>
                   </span>
                   <Button
                     variant="outline"
