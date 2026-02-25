@@ -1002,11 +1002,19 @@ impl MultiTokenManager {
         let json = serde_json::to_string_pretty(&credentials).context("序列化凭据失败")?;
 
         // 写入文件（在 Tokio runtime 内使用 block_in_place 避免阻塞 worker）
-        if tokio::runtime::Handle::try_current().is_ok() {
+        let write_result = if tokio::runtime::Handle::try_current().is_ok() {
             tokio::task::block_in_place(|| std::fs::write(path, &json))
-                .with_context(|| format!("回写凭据文件失败: {:?}", path))?;
         } else {
-            std::fs::write(path, &json).with_context(|| format!("回写凭据文件失败: {:?}", path))?;
+            std::fs::write(path, &json)
+        };
+
+        if let Err(e) = write_result {
+            let detail = format!(
+                "回写凭据文件失败: path={:?}, credentials_count={}, json_bytes={}, os_error={:?}",
+                path, credentials.len(), json.len(), e
+            );
+            tracing::error!("{}", detail);
+            anyhow::bail!(detail);
         }
 
         tracing::debug!("已回写凭据到文件: {:?}", path);
@@ -1567,8 +1575,10 @@ impl MultiTokenManager {
             tracing::info!("已自动升级为多凭据格式以支持持久化");
         }
 
-        // 7. 持久化
-        self.persist_credentials()?;
+        // 7. 持久化（失败不阻塞，凭据已在内存中生效）
+        if let Err(e) = self.persist_credentials() {
+            tracing::warn!("添加凭据后持久化失败（凭据已在内存中生效）: {}", e);
+        }
 
         tracing::info!("成功添加凭据 #{}", new_id);
         Ok(new_id)
