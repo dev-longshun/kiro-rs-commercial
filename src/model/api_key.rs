@@ -79,6 +79,11 @@ impl ApiKey {
             .unwrap_or(false)
     }
 
+    /// 检查是否为活跃状态（已激活且未过期）
+    pub fn is_active(&self) -> bool {
+        self.activated_at.is_some() && !self.is_expired()
+    }
+
     /// 激活 key：设置 activated_at 并计算 expires_at
     /// 幂等操作，已激活的 key 直接跳过
     pub fn activate(&mut self) -> bool {
@@ -211,11 +216,28 @@ impl ApiKeyManager {
             api_key.spending_limit = spending_limit;
         }
         if let Some(duration_days) = duration_days {
-            api_key.duration_days = duration_days;
-            // 设置新 duration 时重置激活状态
-            api_key.activated_at = None;
-            if duration_days.is_some() {
-                api_key.expires_at = None;
+            match duration_days {
+                Some(new_days) => {
+                    if api_key.is_active() {
+                        // 活跃 Key：在当前到期时间上增量续期
+                        let extension = chrono::Duration::milliseconds((new_days * 86_400_000.0) as i64);
+                        let new_expires = api_key.expires_at.unwrap() + extension;
+                        api_key.expires_at = Some(new_expires);
+                        // 重算 duration_days 为从激活到新到期的总天数
+                        let total_ms = (new_expires - api_key.activated_at.unwrap()).num_milliseconds();
+                        api_key.duration_days = Some(total_ms as f64 / 86_400_000.0);
+                    } else {
+                        // 已过期或待激活：重置为待激活状态
+                        api_key.duration_days = Some(new_days);
+                        api_key.activated_at = None;
+                        api_key.expires_at = None;
+                    }
+                }
+                None => {
+                    // 切换为"永不过期"模式
+                    api_key.duration_days = None;
+                    api_key.activated_at = None;
+                }
             }
         }
         let updated = api_key.clone();

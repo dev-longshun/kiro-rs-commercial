@@ -121,7 +121,10 @@ export function ApiKeysPanel() {
     if (editMode === 'date') {
       if (editDuration !== null) {
         data.durationDays = editDuration
-        data.expiresAt = null // 清除旧模式过期时间
+        // 活跃 Key 不清除 expiresAt，由后端增量计算
+        if (getKeyStatus(editingKey) !== 'active') {
+          data.expiresAt = null
+        }
       } else {
         data.durationDays = null
         data.expiresAt = null
@@ -552,7 +555,11 @@ export function ApiKeysPanel() {
                 )}
                 <div className="text-xs text-muted-foreground mt-2">
                   <Clock className="h-3 w-3 inline mr-1" />
-                  {editDuration !== null ? `首次使用后 ${editDuration} 天到期` : '永不过期'}
+                  {editDuration !== null
+                    ? (editingKey && getKeyStatus(editingKey) === 'active'
+                        ? `将在当前到期时间上续期 ${editDuration} 天`
+                        : `首次使用后 ${editDuration} 天到期`)
+                    : '永不过期'}
                 </div>
               </div>
             ) : (
