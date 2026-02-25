@@ -26,4 +26,4 @@ COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
 
 EXPOSE 8990
 
-CMD ["./kiro-rs"]
+CMD ["./kiro-rs", "--config", "/app/config/config.json", "--credentials", "/app/config/credentials.json"]
