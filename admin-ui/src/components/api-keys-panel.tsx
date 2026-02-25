@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign } from 'lucide-react'
+import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign, ArrowDownWideNarrow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,7 @@ export function ApiKeysPanel() {
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [copiedMaster, setCopiedMaster] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
+  const [sortBy, setSortBy] = useState<'newest' | 'cost-desc' | 'cost-asc'>('newest')
 
   const quickDurationOptions = [
     { label: '1 天', days: 1 },
@@ -41,7 +42,7 @@ export function ApiKeysPanel() {
 
   const { data: apiKeys, isLoading } = useApiKeys()
   const { data: serverInfo } = useServerInfo()
-  const { data: usageData } = useAllUsage()
+  const { data: usageData, dataUpdatedAt } = useAllUsage()
   const { mutate: createKey, isPending: isCreating } = useCreateApiKey()
   const { mutate: updateKey } = useUpdateApiKey()
   const { mutate: deleteKey } = useDeleteApiKey()
@@ -228,10 +229,18 @@ export function ApiKeysPanel() {
       {/* API Key 列表 */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">API Key 管理</h2>
-        <Button onClick={() => setCreateDialogOpen(true)} size="sm">
-          <Plus className="h-4 w-4 mr-2" />
-          创建 Key
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <ArrowDownWideNarrow className="h-4 w-4 text-muted-foreground" />
+            <Button size="sm" variant={sortBy === 'newest' ? 'default' : 'outline'} onClick={() => setSortBy('newest')}>最新</Button>
+            <Button size="sm" variant={sortBy === 'cost-desc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-desc')}>费用↓</Button>
+            <Button size="sm" variant={sortBy === 'cost-asc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-asc')}>费用↑</Button>
+          </div>
+          <Button onClick={() => setCreateDialogOpen(true)} size="sm">
+            <Plus className="h-4 w-4 mr-2" />
+            创建 Key
+          </Button>
+        </div>
       </div>
       {isLoading ? (
         <Card>
@@ -245,7 +254,15 @@ export function ApiKeysPanel() {
         </Card>
       ) : (
         <div className="grid gap-3">
-          {[...apiKeys].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((apiKey) => {
+          {[...apiKeys].sort((a, b) => {
+            if (sortBy === 'cost-desc') {
+              return (usageMap.get(b.id)?.totalCost ?? 0) - (usageMap.get(a.id)?.totalCost ?? 0)
+            }
+            if (sortBy === 'cost-asc') {
+              return (usageMap.get(a.id)?.totalCost ?? 0) - (usageMap.get(b.id)?.totalCost ?? 0)
+            }
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          }).map((apiKey) => {
             const status = getKeyStatus(apiKey)
             const usage = usageMap.get(apiKey.id)
             return (
@@ -307,6 +324,11 @@ export function ApiKeysPanel() {
                             >
                               <RotateCcw className="h-3 w-3" />
                             </Button>
+                          )}
+                          {dataUpdatedAt > 0 && (
+                            <span className="text-muted-foreground/60">
+                              · {new Date(dataUpdatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
                           )}
                         </div>
                       </div>
