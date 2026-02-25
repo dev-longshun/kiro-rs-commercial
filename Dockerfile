@@ -26,4 +26,11 @@ COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
 
 EXPOSE 8990
 
-CMD ["./kiro-rs", "--config", "/app/config/config.json", "--credentials", "/app/config/credentials.json"]
+CMD sh -c 'mkdir -p /app/config && \
+  if [ ! -f /app/config/config.json ]; then \
+    echo "{\"apiKey\":\"${API_KEY}\",\"host\":\"${HOST:-0.0.0.0}\",\"port\":${PORT:-8990},\"adminApiKey\":\"${ADMIN_API_KEY}\"}" > /app/config/config.json; \
+  fi && \
+  if [ ! -f /app/config/credentials.json ]; then \
+    echo "[]" > /app/config/credentials.json; \
+  fi && \
+  ./kiro-rs --config /app/config/config.json --credentials /app/config/credentials.json'
