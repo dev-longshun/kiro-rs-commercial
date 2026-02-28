@@ -1,19 +1,6 @@
-# kiro-rs
+# kiro-rs-commercial
 
 一个用 Rust 编写的 Anthropic Claude API 兼容代理服务，将 Anthropic API 请求转换为 Kiro API 请求。
-
----
-
-<table>
-<tr>
-<td>
-<b>特别感谢</b>：<a href="https://co.yes.vg/register?ref=hank9999">YesCode</a> 为本项目提供了 AI API 额度赞助, YesCode 作为一家低调务实的 AI API 中转服务商 <br>
-长期以来提供稳定高可用的服务, 如您有意体验, 请点击链接注册体验 → <a href="https://co.yes.vg/register?ref=hank9999">立即访问</a>
-</td>
-</tr>
-</table>
-
----
 
 ## 免责声明
 
@@ -25,7 +12,7 @@
 因 TLS 默认从 native-tls 切换至 rustls，你可能需要专门安装证书后才能配置 HTTP 代理。可通过 `config.json` 的 `tlsBackend` 切回 `native-tls`。
 如果遇到请求报错, 尤其是无法刷新 token, 或者是直接返回 error request, 请尝试切换 tls 后端为 `native-tls`, 一般即可解决。
 
-**Write Failed/会话卡死**: 如果遇到持续的 Write File / Write Failed 并导致会话不可用，参考 Issue [#22](https://github.com/hank9999/kiro.rs/issues/22) 和 [#49](https://github.com/hank9999/kiro.rs/issues/49) 的说明与临时解决方案（通常与输出过长被截断有关，可尝试调低输出相关 token 上限）
+**Write Failed/会话卡死**: 如果遇到持续的 Write File / Write Failed 并导致会话不可用，通常与输出过长被截断有关，可尝试调低输出相关 token 上限
 
 ## 功能特性
 
@@ -155,13 +142,37 @@ curl http://127.0.0.1:8990/v1/messages \
 
 ### Docker
 
-也可以通过 Docker 启动：
+Docker 镜像地址：
+
+```
+ghcr.io/dev-longshun/kiro-rs-commercial:latest
+```
+
+**通过 Docker Compose 启动：**
 
 ```bash
 docker-compose up
 ```
 
 需要将 `config.json` 和 `credentials.json` 挂载到容器中，具体参见 `docker-compose.yml`。
+
+**通过 Docker 直接启动：**
+
+```bash
+docker run -d \
+  -p 8990:8990 \
+  -v ./data:/app/config \
+  -e API_KEY="你的API密钥" \
+  -e ADMIN_API_KEY="你的管理后台密钥" \
+  ghcr.io/dev-longshun/kiro-rs-commercial:latest
+```
+
+**在 Zeabur 等平台部署：**
+
+1. 选择预构建镜像（Prebuilt Image），输入上方镜像地址
+2. 配置环境变量 `API_KEY` 和 `ADMIN_API_KEY`，或通过 Config File 提供 `config.json`
+3. 开放端口 `8990`
+4. 挂载持久化卷到 `/app/config`（防止凭据丢失）
 
 ## 配置详解
 
@@ -461,7 +472,7 @@ RUST_LOG=debug ./target/release/kiro-rs
 ## 项目结构
 
 ```
-kiro-rs/
+kiro-rs-commercial/
 ├── src/
 │   ├── main.rs                 # 程序入口
 │   ├── http_client.rs          # HTTP 客户端构建
@@ -530,8 +541,4 @@ MIT
 
 ## 致谢
 
-本项目的实现离不开前辈的努力:  
- - [kiro2api](https://github.com/caidaoli/kiro2api)
- - [proxycast](https://github.com/aiclientproxy/proxycast)
-
-本项目部分逻辑参考了以上的项目, 再次由衷的感谢!
+本项目基于 [kiro.rs](https://github.com/hank9999/kiro.rs) 二次开发，感谢原作者的开源贡献。
