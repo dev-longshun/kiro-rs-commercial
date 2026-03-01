@@ -49,7 +49,11 @@ pub fn build_client(
     timeout_secs: u64,
     tls_backend: TlsBackend,
 ) -> anyhow::Result<Client> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
+    let mut builder = Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .pool_max_idle_per_host(20)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(30));
 
     if tls_backend == TlsBackend::Rustls {
         builder = builder.use_rustls_tls();
