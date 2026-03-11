@@ -6,6 +6,8 @@ mod http_client;
 mod kiro;
 mod model;
 pub mod token;
+mod user;
+mod user_ui;
 
 use std::sync::Arc;
 
@@ -173,11 +175,25 @@ async fn main() {
             // 创建 Admin UI 路由
             let admin_ui_app = admin_ui::create_admin_ui_router();
 
+            // 创建 User API 路由
+            let user_state = user::UserState {
+                api_key_manager: api_key_manager.clone().unwrap(),
+                usage_tracker: usage_tracker.clone().unwrap(),
+            };
+            let user_app = user::create_user_router(user_state);
+
+            // 创建 User UI 路由
+            let user_ui_app = user_ui::create_user_ui_router();
+
             tracing::info!("Admin API 已启用");
             tracing::info!("Admin UI 已启用: /admin");
+            tracing::info!("User API 已启用: /api/user");
+            tracing::info!("User UI 已启用: /user");
             anthropic_app
                 .nest("/api/admin", admin_app)
                 .nest("/admin", admin_ui_app)
+                .nest("/api/user", user_app)
+                .nest("/user", user_ui_app)
         }
     } else {
         anthropic_app
@@ -200,6 +216,11 @@ async fn main() {
         tracing::info!("  GET  /api/admin/credentials/:index/balance");
         tracing::info!("Admin UI:");
         tracing::info!("  GET  /admin");
+        tracing::info!("User API:");
+        tracing::info!("  POST /api/user/login");
+        tracing::info!("  GET  /api/user/usage");
+        tracing::info!("User UI:");
+        tracing::info!("  GET  /user");
     }
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
