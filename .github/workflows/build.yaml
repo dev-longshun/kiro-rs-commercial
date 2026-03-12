@@ -96,6 +96,14 @@ jobs:
         working-directory: admin-ui
         run: pnpm build
 
+      - name: Install user-ui dependencies
+        working-directory: user-ui
+        run: npm ci
+
+      - name: Build user-ui
+        working-directory: user-ui
+        run: npm run build
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
