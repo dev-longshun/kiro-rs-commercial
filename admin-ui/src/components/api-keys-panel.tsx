@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign, ArrowDownWideNarrow } from 'lucide-react'
+import { Copy, Plus, Pencil, Trash2, Key, Check, Clock, BarChart3, RotateCcw, DollarSign, ArrowDownWideNarrow, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,10 +22,10 @@ export function ApiKeysPanel() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<ApiKeyItem | null>(null)
   const [newName, setNewName] = useState('')
-  const [newMode, setNewMode] = useState<'date' | 'quota'>('date')
+  const [newMode, setNewMode] = useState<'date' | 'quota'>('quota')
   const [newDuration, setNewDuration] = useState<number | null>(1) // 数值，null 表示永不过期
   const [newDurationUnit, setNewDurationUnit] = useState<'days' | 'hours'>('days')
-  const [newSpendingLimit, setNewSpendingLimit] = useState(50)
+  const [newSpendingLimit, setNewSpendingLimit] = useState(100)
   const [editName, setEditName] = useState('')
   const [editMode, setEditMode] = useState<'date' | 'quota'>('date')
   const [editDuration, setEditDuration] = useState<number | null | string>(1)
@@ -35,6 +35,7 @@ export function ApiKeysPanel() {
   const [copiedMaster, setCopiedMaster] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [sortBy, setSortBy] = useState<'newest' | 'cost-desc' | 'cost-asc'>('newest')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const quickDurationOptions = [
     { label: '1 小时', value: 1, unit: 'hours' as const },
@@ -122,10 +123,10 @@ export function ApiKeysPanel() {
           toast.success('API Key 创建成功')
           setCreateDialogOpen(false)
           setNewName('')
-          setNewMode('date')
+          setNewMode('quota')
           setNewDuration(1)
           setNewDurationUnit('days')
-          setNewSpendingLimit(50)
+          setNewSpendingLimit(100)
         },
         onError: (err) => toast.error(`创建失败: ${extractErrorMessage(err)}`),
       }
@@ -212,6 +213,17 @@ export function ApiKeysPanel() {
       hour: '2-digit', minute: '2-digit',
     })
   }
+
+  const formatSerial = (id: number) => `#${String(id).padStart(3, '0')}`
+
+  const nextSerial = (apiKeys?.length ? Math.max(...apiKeys.map(k => k.id)) : 0) + 1
+
+  const filteredKeys = (apiKeys ?? []).filter((key) => {
+    if (!searchQuery.trim()) return true
+    const q = searchQuery.trim().toLowerCase()
+    const serialStr = String(key.id).padStart(3, '0')
+    return serialStr.includes(q) || String(key.id).includes(q) || key.name.toLowerCase().includes(q)
+  })
   return (
     <div className="space-y-4">
       {/* 服务信息 */}
@@ -269,6 +281,15 @@ export function ApiKeysPanel() {
           </Button>
         </div>
       </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="搜索编号或名称..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9"
+        />
+      </div>
       {isLoading ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">加载中...</CardContent>
@@ -279,9 +300,15 @@ export function ApiKeysPanel() {
             暂无用户 API Key，点击"创建 Key"添加
           </CardContent>
         </Card>
+      ) : filteredKeys.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center text-muted-foreground">
+            未找到匹配的 API Key
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-3">
-          {[...apiKeys].sort((a, b) => {
+          {[...filteredKeys].sort((a, b) => {
             if (sortBy === 'cost-desc') {
               return (usageMap.get(b.id)?.totalCost ?? 0) - (usageMap.get(a.id)?.totalCost ?? 0)
             }
@@ -299,6 +326,7 @@ export function ApiKeysPanel() {
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
+                          <code className="text-xs text-muted-foreground font-mono">{formatSerial(apiKey.id)}</code>
                           <span className="font-medium truncate">{apiKey.name}</span>
                           <Badge variant={status === 'active' ? 'success' : status === 'pending' ? 'secondary' : status === 'expired' ? 'warning' : 'destructive'}>
                             {status === 'active' ? '启用' : status === 'pending' ? '待激活' : status === 'expired' ? '已过期' : '已禁用'}
@@ -384,7 +412,7 @@ export function ApiKeysPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>创建 API Key</DialogTitle>
-            <DialogDescription>为用户创建一个新的 API Key</DialogDescription>
+            <DialogDescription>为用户创建一个新的 API Key（编号 {formatSerial(nextSerial)}）</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -465,8 +493,21 @@ export function ApiKeysPanel() {
             ) : (
               <div>
                 <label className="text-sm font-medium">额度上限（美元）</label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {[100, 500, 1000].map((amount) => (
+                    <Button
+                      key={amount}
+                      type="button"
+                      size="sm"
+                      variant={newSpendingLimit === amount ? 'default' : 'outline'}
+                      onClick={() => setNewSpendingLimit(amount)}
+                    >
+                      ${amount}
+                    </Button>
+                  ))}
+                </div>
                 <div className="flex items-center gap-2 mt-2">
-                  <span className="text-sm text-muted-foreground">$</span>
+                  <span className="text-sm text-muted-foreground">自定义 $</span>
                   <Input
                     type="number"
                     min={1}
