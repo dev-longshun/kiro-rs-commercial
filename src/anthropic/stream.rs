@@ -493,6 +493,8 @@ pub struct StreamContext {
     usage_tracker: Option<Arc<UsageTracker>>,
     /// API Key ID（用于用量记录）
     api_key_id: Option<u32>,
+    /// 缓存命中 tokens（从 input_tokens 中拆分，按折扣计费）
+    cache_read_tokens: i32,
 }
 
 impl StreamContext {
@@ -519,7 +521,14 @@ impl StreamContext {
             strip_thinking_leading_newline: false,
             usage_tracker: None,
             api_key_id: None,
+            cache_read_tokens: 0,
         }
+    }
+
+    /// 设置缓存命中 tokens
+    pub fn with_cache_read_tokens(mut self, cache_read_tokens: i32) -> Self {
+        self.cache_read_tokens = cache_read_tokens;
+        self
     }
 
     /// 设置用量追踪
@@ -1075,9 +1084,16 @@ impl StreamContext {
         // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
         let final_input_tokens = self.context_input_tokens.unwrap_or(self.input_tokens);
 
+        // 按实际 input tokens 等比例调整 cache_read_tokens
+        let final_cache_read = if final_input_tokens != self.input_tokens && self.input_tokens > 0 {
+            ((self.cache_read_tokens as f64) * (final_input_tokens as f64) / (self.input_tokens as f64)) as i32
+        } else {
+            self.cache_read_tokens
+        };
+
         // 记录用量
         if let (Some(tracker), Some(key_id)) = (&self.usage_tracker, self.api_key_id) {
-            tracker.record(key_id, self.model.clone(), final_input_tokens, self.output_tokens);
+            tracker.record(key_id, self.model.clone(), final_input_tokens, self.output_tokens, final_cache_read);
         }
 
         // 生成最终事件
@@ -1125,6 +1141,12 @@ impl BufferedStreamContext {
             estimated_input_tokens,
             initial_events_generated: false,
         }
+    }
+
+    /// 设置缓存命中 tokens
+    pub fn with_cache_read_tokens(mut self, cache_read_tokens: i32) -> Self {
+        self.inner = self.inner.with_cache_read_tokens(cache_read_tokens);
+        self
     }
 
     /// 设置用量追踪

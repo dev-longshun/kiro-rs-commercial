@@ -224,6 +224,30 @@ fn count_all_tokens_local(
     total.max(1)
 }
 
+/// 估算最后一条消息的 tokens（用于计算非缓存部分）
+///
+/// 多轮对话中，只有最后一条用户消息是"新"的，之前的消息都是 cache hit。
+/// 返回最后一条消息的 token 数，用于从总 input tokens 中拆分出缓存部分。
+pub(crate) fn count_last_message_tokens(messages: &[crate::anthropic::types::Message]) -> u64 {
+    if let Some(last) = messages.last() {
+        if let serde_json::Value::String(s) = &last.content {
+            count_tokens(s)
+        } else if let serde_json::Value::Array(arr) = &last.content {
+            let mut total = 0u64;
+            for item in arr {
+                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                    total += count_tokens(text);
+                }
+            }
+            total.max(1)
+        } else {
+            1
+        }
+    } else {
+        0
+    }
+}
+
 /// 估算输出 tokens
 pub(crate) fn estimate_output_tokens(content: &[serde_json::Value]) -> i32 {
     let mut total = 0;
