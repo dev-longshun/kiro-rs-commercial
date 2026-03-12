@@ -216,7 +216,35 @@ export function ApiKeysPanel() {
 
   const formatSerial = (id: number) => `#${String(id).padStart(3, '0')}`
 
-  const nextSerial = (apiKeys?.length ? Math.max(...apiKeys.map(k => k.id)) : 0) + 1
+  // 将名称解析为数值（用于编号去重比较），非纯数字返回 null
+  const parseNameAsNumber = (name: string): number | null => {
+    const trimmed = name.trim()
+    if (!/^\d+$/.test(trimmed)) return null
+    return parseInt(trimmed, 10)
+  }
+
+  // 获取所有已存在的编号数值集合
+  const existingNumbers = new Set(
+    (apiKeys ?? []).map(k => parseNameAsNumber(k.name)).filter((n): n is number => n !== null)
+  )
+
+  // 生成不重复的随机 4 位编号
+  const generateUniqueSerial = (): string => {
+    for (let i = 0; i < 100; i++) {
+      const num = Math.floor(Math.random() * 9999) + 1 // 1-9999
+      if (!existingNumbers.has(num)) return String(num).padStart(4, '0')
+    }
+    // fallback: 找最大值 +1
+    const max = existingNumbers.size > 0 ? Math.max(...existingNumbers) : 0
+    return String(max + 1).padStart(4, '0')
+  }
+
+  // 检查当前输入的名称是否与已有编号冲突
+  const nameConflict = (() => {
+    const num = parseNameAsNumber(newName)
+    if (num === null) return false
+    return existingNumbers.has(num)
+  })()
 
   const filteredKeys = (apiKeys ?? []).filter((key) => {
     if (!searchQuery.trim()) return true
@@ -275,7 +303,7 @@ export function ApiKeysPanel() {
             <Button size="sm" variant={sortBy === 'cost-desc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-desc')}>费用↓</Button>
             <Button size="sm" variant={sortBy === 'cost-asc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-asc')}>费用↑</Button>
           </div>
-          <Button onClick={() => setCreateDialogOpen(true)} size="sm">
+          <Button onClick={() => { setNewName(generateUniqueSerial()); setCreateDialogOpen(true) }} size="sm">
             <Plus className="h-4 w-4 mr-2" />
             创建 Key
           </Button>
@@ -412,16 +440,19 @@ export function ApiKeysPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>创建 API Key</DialogTitle>
-            <DialogDescription>为用户创建一个新的 API Key（编号 {formatSerial(nextSerial)}）</DialogDescription>
+            <DialogDescription>为用户创建一个新的 API Key</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium">备注名称</label>
+              <label className="text-sm font-medium">编号</label>
               <Input
-                placeholder="如：张三-月付"
+                placeholder="4 位编号，如 0001"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
               />
+              {nameConflict && (
+                <p className="text-xs text-destructive mt-1">该编号已存在，请更换</p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium">限制方式</label>
@@ -509,11 +540,14 @@ export function ApiKeysPanel() {
                 <div className="flex items-center gap-2 mt-2">
                   <span className="text-sm text-muted-foreground">自定义 $</span>
                   <Input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={newSpendingLimit}
-                    onChange={(e) => setNewSpendingLimit(Number(e.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    value={newSpendingLimit || ''}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, '')
+                      setNewSpendingLimit(v === '' ? 0 : Number(v))
+                    }}
+                    onFocus={(e) => e.target.select()}
                     className="w-32"
                   />
                 </div>
@@ -526,7 +560,7 @@ export function ApiKeysPanel() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>取消</Button>
-            <Button onClick={handleCreate} disabled={!newName.trim() || isCreating}>
+            <Button onClick={handleCreate} disabled={!newName.trim() || nameConflict || isCreating}>
               {isCreating ? '创建中...' : '创建'}
             </Button>
           </DialogFooter>

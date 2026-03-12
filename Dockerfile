@@ -6,6 +6,12 @@ RUN npm install -g pnpm && pnpm install
 COPY admin-ui ./
 RUN pnpm build
 
+WORKDIR /app/user-ui
+COPY user-ui/package.json user-ui/package-lock.json ./
+RUN npm ci
+COPY user-ui ./
+RUN npm run build
+
 FROM rust:1.92-alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static
@@ -14,6 +20,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 COPY --from=frontend-builder /app/admin-ui/dist /app/admin-ui/dist
+COPY --from=frontend-builder /app/user-ui/dist /app/user-ui/dist
 
 RUN cargo build --release
 
