@@ -55,7 +55,7 @@ pub async fn user_auth_middleware(
             .into_response();
     };
 
-    match state.api_key_manager.authenticate(&key) {
+    match state.api_key_manager.authenticate_readonly(&key) {
         ApiKeyAuthResult::Valid { id, name, spending_limit } => {
             request.extensions_mut().insert(UserContext {
                 key_id: id,

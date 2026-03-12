@@ -17,7 +17,7 @@ pub async fn login(
     State(state): State<UserState>,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    match state.api_key_manager.authenticate(&payload.api_key) {
+    match state.api_key_manager.authenticate_readonly(&payload.api_key) {
         ApiKeyAuthResult::Valid { id, name, spending_limit } => {
             // 查询用量
             let summary = state.usage_tracker.get_summary(id);

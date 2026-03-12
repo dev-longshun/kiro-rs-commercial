@@ -173,6 +173,20 @@ impl ApiKeyManager {
             None => ApiKeyAuthResult::NotFound,
         }
     }
+
+    /// 只读认证：只要 key 存在就放行（不检查过期/禁用/额度）
+    /// 用于用户查询用量等只读场景
+    pub fn authenticate_readonly(&self, key: &str) -> ApiKeyAuthResult {
+        let keys = self.keys.read();
+        match keys.iter().find(|k| k.key == key) {
+            Some(api_key) => ApiKeyAuthResult::Valid {
+                id: api_key.id,
+                name: api_key.name.clone(),
+                spending_limit: api_key.spending_limit,
+            },
+            None => ApiKeyAuthResult::NotFound,
+        }
+    }
     /// 获取所有 key（克隆）
     pub fn list(&self) -> Vec<ApiKey> {
         self.keys.read().clone()
