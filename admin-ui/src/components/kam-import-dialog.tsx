@@ -62,7 +62,24 @@ function isValidKamAccount(item: unknown): item is KamAccount {
   return typeof cred.refreshToken === 'string' && cred.refreshToken.trim().length > 0
 }
 
-// 解析 KAM 导出 JSON，支持单账号和多账号格式
+// 将扁平结构（顶层 refreshToken）适配为 KAM 的 credentials 嵌套结构
+function normalizeToKamAccount(item: unknown): unknown {
+  if (typeof item !== 'object' || item === null) return item
+  const obj = item as Record<string, unknown>
+  // 已有 credentials 结构，无需转换
+  if (typeof obj.credentials === 'object' && obj.credentials !== null) return item
+  // 顶层有 refreshToken，自动包装
+  if (typeof obj.refreshToken === 'string' && obj.refreshToken.trim().length > 0) {
+    const { refreshToken, clientId, clientSecret, region, authMethod, startUrl, ...rest } = obj
+    return {
+      ...rest,
+      credentials: { refreshToken, clientId, clientSecret, region, authMethod, startUrl },
+    }
+  }
+  return item
+}
+
+// 解析 KAM 导出 JSON，支持单账号和多账号格式，兼容扁平 refreshToken 结构
 function parseKamJson(raw: string): KamAccount[] {
   const parsed = JSON.parse(raw)
 
@@ -80,9 +97,16 @@ function parseKamJson(raw: string): KamAccount[] {
   else if (parsed.credentials && typeof parsed.credentials === 'object') {
     rawItems = [parsed]
   }
+  // 单个扁平对象（顶层有 refreshToken）
+  else if (typeof parsed.refreshToken === 'string') {
+    rawItems = [parsed]
+  }
   else {
     throw new Error('无法识别的 KAM JSON 格式')
   }
+
+  // 适配扁平结构为 KAM 嵌套结构
+  rawItems = rawItems.map(normalizeToKamAccount)
 
   const validAccounts = rawItems.filter(isValidKamAccount)
 
