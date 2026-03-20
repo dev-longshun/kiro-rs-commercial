@@ -18,6 +18,8 @@ import {
   getAllUsage,
   resetKeyUsage,
   getRpm,
+  getCacheCreationRatio,
+  setCacheCreationRatio,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 
@@ -210,5 +212,26 @@ export function useRpm() {
     queryKey: ['rpm'],
     queryFn: getRpm,
     refetchInterval: 5000,
+  })
+}
+
+// ============ 缓存写入比例 Hooks ============
+
+// 查询缓存写入比例
+export function useCacheCreationRatio() {
+  return useQuery({
+    queryKey: ['cacheCreationRatio'],
+    queryFn: getCacheCreationRatio,
+  })
+}
+
+// 设置缓存写入比例
+export function useSetCacheCreationRatio() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setCacheCreationRatio,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cacheCreationRatio'] })
+    },
   })
 }

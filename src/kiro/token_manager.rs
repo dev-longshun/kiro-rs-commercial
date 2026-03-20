@@ -12,6 +12,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
@@ -530,6 +531,8 @@ pub struct MultiTokenManager {
     is_multiple_format: AtomicBool,
     /// 负载均衡模式（运行时可修改）
     load_balancing_mode: Mutex<String>,
+    /// 缓存写入模拟比例（运行时可修改，Arc 共享给 AppState）
+    cache_creation_ratio: Arc<Mutex<f64>>,
     /// 最近一次统计持久化时间（用于 debounce）
     last_stats_save_at: Mutex<Option<Instant>>,
     /// 统计数据是否有未落盘更新
@@ -635,6 +638,7 @@ impl MultiTokenManager {
             .unwrap_or(0);
 
         let load_balancing_mode = config.load_balancing_mode.clone();
+        let cache_creation_ratio = config.cache_creation_ratio;
         let manager = Self {
             config,
             proxy,
@@ -644,6 +648,7 @@ impl MultiTokenManager {
             credentials_path,
             is_multiple_format: AtomicBool::new(is_multiple_format),
             load_balancing_mode: Mutex::new(load_balancing_mode),
+            cache_creation_ratio: Arc::new(Mutex::new(cache_creation_ratio)),
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
             rr_counter: AtomicU64::new(0),
@@ -1826,6 +1831,53 @@ impl MultiTokenManager {
         }
 
         tracing::info!("负载均衡模式已设置为: {}", mode);
+        Ok(())
+    }
+
+    /// 获取缓存写入模拟比例（Admin API）
+    pub fn get_cache_creation_ratio(&self) -> f64 {
+        *self.cache_creation_ratio.lock()
+    }
+
+    /// 获取缓存写入模拟比例的 Arc 引用（用于注入到 AppState）
+    pub fn cache_creation_ratio_ref(&self) -> Arc<Mutex<f64>> {
+        self.cache_creation_ratio.clone()
+    }
+
+    fn persist_cache_creation_ratio(&self, ratio: f64) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        let config_path = match self.config.config_path() {
+            Some(path) => path.to_path_buf(),
+            None => {
+                tracing::warn!("配置文件路径未知，缓存写入比例仅在当前进程生效: {}", ratio);
+                return Ok(());
+            }
+        };
+
+        let mut config = Config::load(&config_path)
+            .with_context(|| format!("重新加载配置失败: {}", config_path.display()))?;
+        config.cache_creation_ratio = ratio;
+        config
+            .save()
+            .with_context(|| format!("持久化缓存写入比例失败: {}", config_path.display()))?;
+
+        Ok(())
+    }
+
+    /// 设置缓存写入模拟比例（Admin API）
+    pub fn set_cache_creation_ratio(&self, ratio: f64) -> anyhow::Result<()> {
+        if !(0.0..=1.0).contains(&ratio) {
+            anyhow::bail!("无效的缓存写入比例: {}，必须在 0.0~1.0 之间", ratio);
+        }
+
+        *self.cache_creation_ratio.lock() = ratio;
+
+        if let Err(err) = self.persist_cache_creation_ratio(ratio) {
+            tracing::warn!("缓存写入比例持久化失败，仅当前进程生效: {}", err);
+        }
+
+        tracing::info!("缓存写入模拟比例已设置为: {}", ratio);
         Ok(())
     }
 }

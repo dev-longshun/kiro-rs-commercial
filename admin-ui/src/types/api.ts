@@ -147,3 +147,12 @@ export interface RpmSnapshot {
   byCredential: Record<string, number>
   byApiKey: Record<string, number>
 }
+
+// 缓存写入比例
+export interface CacheCreationRatioResponse {
+  ratio: number
+}
+
+export interface SetCacheCreationRatioRequest {
+  ratio: number
+}
