@@ -147,8 +147,7 @@ async fn main() {
     };
 
     let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)
-        .with_rpm_tracker(rpm_tracker.clone())
-        .with_cache_creation_ratio(token_manager.cache_creation_ratio_ref());
+        .with_rpm_tracker(rpm_tracker.clone());
     if let Some(ref manager) = api_key_manager {
         anthropic_app_state = anthropic_app_state.with_api_key_manager(manager.clone());
     }

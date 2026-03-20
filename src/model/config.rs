@@ -91,11 +91,6 @@ pub struct Config {
     #[serde(default = "default_load_balancing_mode")]
     pub load_balancing_mode: String,
 
-    /// 缓存写入模拟比例（0.0~1.0），控制历史 tokens 中多少比例报为 cache_creation
-    /// Anthropic 真实计价中写入缓存按 1.25x 计费
-    #[serde(default = "default_cache_creation_ratio")]
-    pub cache_creation_ratio: f64,
-
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
@@ -138,10 +133,6 @@ fn default_load_balancing_mode() -> String {
     "priority".to_string()
 }
 
-fn default_cache_creation_ratio() -> f64 {
-    0.1
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -164,7 +155,6 @@ impl Default for Config {
             proxy_password: None,
             admin_api_key: None,
             load_balancing_mode: default_load_balancing_mode(),
-            cache_creation_ratio: default_cache_creation_ratio(),
             config_path: None,
         }
     }
@@ -270,11 +260,6 @@ impl Config {
         }
         if let Ok(v) = env::var("LOAD_BALANCING_MODE") {
             self.load_balancing_mode = v;
-        }
-        if let Ok(v) = env::var("CACHE_CREATION_RATIO") {
-            if let Ok(r) = v.parse::<f64>() {
-                self.cache_creation_ratio = r.clamp(0.0, 1.0);
-            }
         }
     }
 }

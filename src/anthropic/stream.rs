@@ -495,8 +495,6 @@ pub struct StreamContext {
     api_key_id: Option<u32>,
     /// 缓存命中 tokens（从 input_tokens 中拆分，按折扣计费）
     cache_read_tokens: i32,
-    /// 缓存写入模拟比例（0.0~1.0）
-    cache_creation_ratio: f64,
 }
 
 impl StreamContext {
@@ -524,19 +522,12 @@ impl StreamContext {
             usage_tracker: None,
             api_key_id: None,
             cache_read_tokens: 0,
-            cache_creation_ratio: 0.0,
         }
     }
 
     /// 设置缓存命中 tokens
     pub fn with_cache_read_tokens(mut self, cache_read_tokens: i32) -> Self {
         self.cache_read_tokens = cache_read_tokens;
-        self
-    }
-
-    /// 设置缓存写入模拟比例
-    pub fn with_cache_creation_ratio(mut self, ratio: f64) -> Self {
-        self.cache_creation_ratio = ratio;
         self
     }
 
@@ -553,11 +544,6 @@ impl StreamContext {
 
     /// 生成 message_start 事件
     pub fn create_message_start_event(&self) -> serde_json::Value {
-        // 缓存模拟：基于历史消息 tokens（cache_read_tokens）计算
-        let simulated_cache_creation = (self.cache_read_tokens as f64 * self.cache_creation_ratio) as i32;
-        let simulated_cache_read = self.cache_read_tokens;
-        let reported_input = (self.input_tokens - simulated_cache_read - simulated_cache_creation).max(0);
-
         json!({
             "type": "message_start",
             "message": {
@@ -569,10 +555,8 @@ impl StreamContext {
                 "stop_reason": null,
                 "stop_sequence": null,
                 "usage": {
-                    "input_tokens": reported_input,
-                    "output_tokens": 1,
-                    "cache_creation_input_tokens": simulated_cache_creation,
-                    "cache_read_input_tokens": simulated_cache_read
+                    "input_tokens": self.input_tokens,
+                    "output_tokens": 1
                 }
             }
         })
@@ -1100,27 +1084,22 @@ impl StreamContext {
         // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
         let final_input_tokens = self.context_input_tokens.unwrap_or(self.input_tokens);
 
-        // 按实际 input tokens 等比例调整 cache_read_tokens（历史消息部分）
+        // 按实际 input tokens 等比例调整 cache_read_tokens
         let final_cache_read = if final_input_tokens != self.input_tokens && self.input_tokens > 0 {
             ((self.cache_read_tokens as f64) * (final_input_tokens as f64) / (self.input_tokens as f64)) as i32
         } else {
             self.cache_read_tokens
         };
 
-        // 缓存模拟：基于历史消息 tokens（final_cache_read）计算
-        let simulated_cache_creation = (final_cache_read as f64 * self.cache_creation_ratio) as i32;
-        let simulated_cache_read = final_cache_read;
-        let reported_input = (final_input_tokens - simulated_cache_read - simulated_cache_creation).max(0);
-
         // 记录用量
         if let (Some(tracker), Some(key_id)) = (&self.usage_tracker, self.api_key_id) {
             tracker.record(key_id, self.model.clone(), final_input_tokens, self.output_tokens, final_cache_read);
         }
 
-        // 生成最终事件（使用模拟后的 reported_input）
+        // 生成最终事件
         events.extend(
             self.state_manager
-                .generate_final_events(reported_input, self.output_tokens),
+                .generate_final_events(final_input_tokens, self.output_tokens),
         );
         events
     }
@@ -1167,12 +1146,6 @@ impl BufferedStreamContext {
     /// 设置缓存命中 tokens
     pub fn with_cache_read_tokens(mut self, cache_read_tokens: i32) -> Self {
         self.inner = self.inner.with_cache_read_tokens(cache_read_tokens);
-        self
-    }
-
-    /// 设置缓存写入模拟比例
-    pub fn with_cache_creation_ratio(mut self, ratio: f64) -> Self {
-        self.inner = self.inner.with_cache_creation_ratio(ratio);
         self
     }
 
@@ -1226,26 +1199,12 @@ impl BufferedStreamContext {
             .context_input_tokens
             .unwrap_or(self.estimated_input_tokens);
 
-        // 按实际 input tokens 等比例调整 cache_read_tokens（历史消息部分）
-        let final_cache_read = if final_input_tokens != self.inner.input_tokens && self.inner.input_tokens > 0 {
-            ((self.inner.cache_read_tokens as f64) * (final_input_tokens as f64) / (self.inner.input_tokens as f64)) as i32
-        } else {
-            self.inner.cache_read_tokens
-        };
-
-        // 缓存模拟：基于历史消息 tokens 计算
-        let simulated_cache_creation = (final_cache_read as f64 * self.inner.cache_creation_ratio) as i32;
-        let simulated_cache_read = final_cache_read;
-        let reported_input = (final_input_tokens - simulated_cache_read - simulated_cache_creation).max(0);
-
-        // 更正 message_start 事件中的 usage
+        // 更正 message_start 事件中的 input_tokens
         for event in &mut self.event_buffer {
             if event.event == "message_start" {
                 if let Some(message) = event.data.get_mut("message") {
                     if let Some(usage) = message.get_mut("usage") {
-                        usage["input_tokens"] = serde_json::json!(reported_input);
-                        usage["cache_creation_input_tokens"] = serde_json::json!(simulated_cache_creation);
-                        usage["cache_read_input_tokens"] = serde_json::json!(simulated_cache_read);
+                        usage["input_tokens"] = serde_json::json!(final_input_tokens);
                     }
                 }
             }

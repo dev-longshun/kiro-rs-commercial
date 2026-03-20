@@ -13,9 +13,9 @@ use crate::kiro::token_manager::MultiTokenManager;
 
 use super::error::AdminServiceError;
 use super::types::{
-    AddCredentialRequest, AddCredentialResponse, BalanceResponse, CacheCreationRatioResponse,
-    CredentialStatusItem, CredentialsStatusResponse, LoadBalancingModeResponse,
-    SetCacheCreationRatioRequest, SetLoadBalancingModeRequest, UpdateCredentialRequest,
+    AddCredentialRequest, AddCredentialResponse, BalanceResponse, CredentialStatusItem,
+    CredentialsStatusResponse, LoadBalancingModeResponse, SetLoadBalancingModeRequest,
+    UpdateCredentialRequest,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -295,25 +295,6 @@ impl AdminService {
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
         Ok(LoadBalancingModeResponse { mode: req.mode })
-    }
-
-    /// 获取缓存写入模拟比例
-    pub fn get_cache_creation_ratio(&self) -> CacheCreationRatioResponse {
-        CacheCreationRatioResponse {
-            ratio: self.token_manager.get_cache_creation_ratio(),
-        }
-    }
-
-    /// 设置缓存写入模拟比例
-    pub fn set_cache_creation_ratio(
-        &self,
-        req: SetCacheCreationRatioRequest,
-    ) -> Result<CacheCreationRatioResponse, AdminServiceError> {
-        self.token_manager
-            .set_cache_creation_ratio(req.ratio)
-            .map_err(|e| AdminServiceError::InvalidCredential(e.to_string()))?;
-
-        Ok(CacheCreationRatioResponse { ratio: req.ratio })
     }
 
     // ============ 余额缓存持久化 ============

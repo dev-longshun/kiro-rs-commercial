@@ -14,7 +14,6 @@ import type {
   UpdateApiKeyRequest,
   UsageSummary,
   RpmSnapshot,
-  CacheCreationRatioResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -169,19 +168,5 @@ export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
 // 获取实时 RPM 数据
 export async function getRpm(): Promise<RpmSnapshot> {
   const { data } = await api.get<RpmSnapshot>('/rpm')
-  return data
-}
-
-// ============ 缓存写入比例 ============
-
-// 获取缓存写入比例
-export async function getCacheCreationRatio(): Promise<CacheCreationRatioResponse> {
-  const { data } = await api.get<CacheCreationRatioResponse>('/config/cache-creation-ratio')
-  return data
-}
-
-// 设置缓存写入比例
-export async function setCacheCreationRatio(ratio: number): Promise<CacheCreationRatioResponse> {
-  const { data } = await api.put<CacheCreationRatioResponse>('/config/cache-creation-ratio', { ratio })
   return data
 }

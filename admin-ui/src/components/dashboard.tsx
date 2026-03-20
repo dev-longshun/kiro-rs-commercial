@@ -13,7 +13,7 @@ import { BatchImportDialog } from '@/components/batch-import-dialog'
 import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useRpm, useCacheCreationRatio, useSetCacheCreationRatio } from '@/hooks/use-credentials'
+import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -55,8 +55,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { mutate: resetFailure } = useResetFailure()
   const { data: loadBalancingData, isLoading: isLoadingMode } = useLoadBalancingMode()
   const { mutate: setLoadBalancingMode, isPending: isSettingMode } = useSetLoadBalancingMode()
-  const { data: cacheCreationData } = useCacheCreationRatio()
-  const { mutate: setCacheCreationRatio, isPending: isSettingCreationRatio } = useSetCacheCreationRatio()
 
   // 计算分页
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
@@ -465,18 +463,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
     })
   }
 
-  // 设置缓存写入比例
-  const handleSetCacheCreationRatio = (ratio: number) => {
-    setCacheCreationRatio(ratio, {
-      onSuccess: () => {
-        toast.success(`缓存写入比例已设置为 ${Math.round(ratio * 100)}%`)
-      },
-      onError: (error) => {
-        toast.error(`设置失败: ${extractErrorMessage(error)}`)
-      }
-    })
-  }
-
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -547,19 +533,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
             >
               {isLoadingMode ? '加载中...' : (loadBalancingData?.mode === 'priority' ? '优先级模式' : '均衡负载')}
             </Button>
-            <select
-              className="hidden sm:inline-flex h-8 px-2 text-xs rounded-md border border-input bg-background hover:bg-accent cursor-pointer disabled:opacity-50"
-              value={cacheCreationData?.ratio ?? 0.1}
-              onChange={(e) => handleSetCacheCreationRatio(Number(e.target.value))}
-              disabled={isSettingCreationRatio}
-              title="缓存写入模拟比例"
-            >
-              <option value={0}>写入 0%</option>
-              <option value={0.05}>写入 5%</option>
-              <option value={0.1}>写入 10%</option>
-              <option value={0.15}>写入 15%</option>
-              <option value={0.2}>写入 20%</option>
-            </select>
             <Button variant="ghost" size="icon" onClick={toggleDarkMode}>
               {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
