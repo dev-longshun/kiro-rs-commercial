@@ -399,9 +399,6 @@ pub async fn post_messages(
 
     tracing::debug!("Kiro request body: {}", request_body);
 
-    // 估算最后一条消息的 tokens（非缓存部分）
-    let last_msg_tokens = token::count_last_message_tokens(&payload.messages) as i32;
-
     // 估算输入 tokens
     let input_tokens = token::count_all_tokens(
         payload.model.clone(),
@@ -409,9 +406,6 @@ pub async fn post_messages(
         payload.messages,
         payload.tools,
     ) as i32;
-
-    // 缓存命中 tokens = 总 input - 最后一条消息
-    let cache_read_tokens = (input_tokens - last_msg_tokens).max(0);
 
     // 检查是否启用了thinking
     let thinking_enabled = payload
@@ -431,7 +425,6 @@ pub async fn post_messages(
             &request_body,
             &payload.model,
             input_tokens,
-            cache_read_tokens,
             thinking_enabled,
             usage_tracker,
             api_key_id,
@@ -444,7 +437,6 @@ pub async fn post_messages(
             &request_body,
             &payload.model,
             input_tokens,
-            cache_read_tokens,
             usage_tracker,
             api_key_id,
         )
@@ -458,7 +450,6 @@ async fn handle_stream_request(
     request_body: &str,
     model: &str,
     input_tokens: i32,
-    cache_read_tokens: i32,
     thinking_enabled: bool,
     usage_tracker: Option<std::sync::Arc<crate::model::usage::UsageTracker>>,
     api_key_id: Option<u32>,
@@ -471,7 +462,6 @@ async fn handle_stream_request(
 
     // 创建流处理上下文
     let mut ctx = StreamContext::new_with_thinking(model, input_tokens, thinking_enabled)
-        .with_cache_read_tokens(cache_read_tokens)
         .with_usage_tracking(usage_tracker, api_key_id);
 
     // 生成初始事件
@@ -599,7 +589,6 @@ async fn handle_non_stream_request(
     request_body: &str,
     model: &str,
     input_tokens: i32,
-    cache_read_tokens: i32,
     usage_tracker: Option<std::sync::Arc<crate::model::usage::UsageTracker>>,
     api_key_id: Option<u32>,
 ) -> Response {
@@ -738,16 +727,9 @@ async fn handle_non_stream_request(
     // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
     let final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
 
-    // 按实际 input tokens 等比例调整 cache_read_tokens
-    let final_cache_read = if final_input_tokens != input_tokens && input_tokens > 0 {
-        ((cache_read_tokens as f64) * (final_input_tokens as f64) / (input_tokens as f64)) as i32
-    } else {
-        cache_read_tokens
-    };
-
     // 记录用量
     if let (Some(tracker), Some(key_id)) = (&usage_tracker, api_key_id) {
-        tracker.record(key_id, model.to_string(), final_input_tokens, output_tokens, final_cache_read);
+        tracker.record(key_id, model.to_string(), final_input_tokens, output_tokens);
     }
 
     // 构建 Anthropic 响应
@@ -926,9 +908,6 @@ pub async fn post_messages_cc(
 
     tracing::debug!("Kiro request body: {}", request_body);
 
-    // 估算最后一条消息的 tokens（非缓存部分）
-    let last_msg_tokens = token::count_last_message_tokens(&payload.messages) as i32;
-
     // 估算输入 tokens
     let input_tokens = token::count_all_tokens(
         payload.model.clone(),
@@ -936,9 +915,6 @@ pub async fn post_messages_cc(
         payload.messages,
         payload.tools,
     ) as i32;
-
-    // 缓存命中 tokens = 总 input - 最后一条消息
-    let cache_read_tokens = (input_tokens - last_msg_tokens).max(0);
 
     // 检查是否启用了thinking
     let thinking_enabled = payload
@@ -958,7 +934,6 @@ pub async fn post_messages_cc(
             &request_body,
             &payload.model,
             input_tokens,
-            cache_read_tokens,
             thinking_enabled,
             usage_tracker.clone(),
             api_key_id,
@@ -971,7 +946,6 @@ pub async fn post_messages_cc(
             &request_body,
             &payload.model,
             input_tokens,
-            cache_read_tokens,
             usage_tracker,
             api_key_id,
         )
@@ -988,7 +962,6 @@ async fn handle_stream_request_buffered(
     request_body: &str,
     model: &str,
     estimated_input_tokens: i32,
-    cache_read_tokens: i32,
     thinking_enabled: bool,
     usage_tracker: Option<std::sync::Arc<crate::model::usage::UsageTracker>>,
     api_key_id: Option<u32>,
@@ -1001,7 +974,6 @@ async fn handle_stream_request_buffered(
 
     // 创建缓冲流处理上下文
     let ctx = BufferedStreamContext::new(model, estimated_input_tokens, thinking_enabled)
-        .with_cache_read_tokens(cache_read_tokens)
         .with_usage_tracking(usage_tracker, api_key_id);
 
     // 创建缓冲 SSE 流

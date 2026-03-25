@@ -22,9 +22,6 @@ pub struct UsageRecord {
     pub input_tokens: i32,
     /// 输出 tokens
     pub output_tokens: i32,
-    /// 缓存命中 tokens（从 input_tokens 中拆分，按折扣计费）
-    #[serde(default)]
-    pub cache_read_tokens: i32,
     /// 估算费用（美元）
     pub estimated_cost: f64,
     /// 记录时间
@@ -91,20 +88,12 @@ fn get_model_pricing(model: &str) -> ModelPricing {
     }
 }
 
-/// 缓存命中 tokens 的折扣系数（五折）
-const CACHE_READ_DISCOUNT: f64 = 0.5;
-
 /// 计算单次请求的估算费用
-///
-/// `cache_read_tokens` 是从 `input_tokens` 中拆分出的缓存命中部分，
-/// 按 `CACHE_READ_DISCOUNT` 折扣计费。
-fn calculate_cost(model: &str, input_tokens: i32, output_tokens: i32, cache_read_tokens: i32) -> f64 {
+fn calculate_cost(model: &str, input_tokens: i32, output_tokens: i32) -> f64 {
     let pricing = get_model_pricing(model);
-    let fresh_input = (input_tokens - cache_read_tokens).max(0);
-    let fresh_cost = (fresh_input as f64 / 1_000_000.0) * pricing.input_per_mtok;
-    let cache_cost = (cache_read_tokens as f64 / 1_000_000.0) * pricing.input_per_mtok * CACHE_READ_DISCOUNT;
+    let input_cost = (input_tokens as f64 / 1_000_000.0) * pricing.input_per_mtok;
     let output_cost = (output_tokens as f64 / 1_000_000.0) * pricing.output_per_mtok;
-    fresh_cost + cache_cost + output_cost
+    input_cost + output_cost
 }
 
 /// 用量追踪器（线程安全）
@@ -150,15 +139,13 @@ impl UsageTracker {
         model: String,
         input_tokens: i32,
         output_tokens: i32,
-        cache_read_tokens: i32,
     ) {
-        let cost = calculate_cost(&model, input_tokens, output_tokens, cache_read_tokens);
+        let cost = calculate_cost(&model, input_tokens, output_tokens);
         let record = UsageRecord {
             api_key_id,
             model,
             input_tokens,
             output_tokens,
-            cache_read_tokens,
             estimated_cost: cost,
             created_at: Utc::now(),
         };
