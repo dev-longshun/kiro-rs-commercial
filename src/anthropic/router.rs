@@ -15,8 +15,8 @@ use super::{
     middleware::{AppState, auth_middleware, cors_layer},
 };
 
-/// 请求体最大大小限制 (50MB)
-const MAX_BODY_SIZE: usize = 50 * 1024 * 1024;
+/// 请求体最大大小限制 (200MB)
+const MAX_BODY_SIZE: usize = 200 * 1024 * 1024;
 
 /// 创建 Anthropic API 路由
 ///
