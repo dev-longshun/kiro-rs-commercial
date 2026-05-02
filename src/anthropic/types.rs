@@ -98,6 +98,17 @@ where
 pub struct OutputConfig {
     #[serde(default = "default_effort")]
     pub effort: String,
+    #[serde(default)]
+    pub format: Option<OutputFormat>,
+}
+
+/// OutputConfig.format 配置
+#[derive(Debug, Deserialize, Clone)]
+pub struct OutputFormat {
+    #[serde(rename = "type")]
+    pub format_type: String,
+    #[serde(default)]
+    pub schema: serde_json::Value,
 }
 
 fn default_effort() -> String {

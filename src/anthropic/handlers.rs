@@ -784,6 +784,7 @@ fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
     if is_opus_4_6 {
         payload.output_config = Some(OutputConfig {
             effort: "high".to_string(),
+            format: None,
         });
     }
 }
