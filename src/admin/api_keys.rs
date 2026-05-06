@@ -22,7 +22,7 @@ pub async fn get_server_info(State(state): State<AdminState>) -> impl IntoRespon
         master_api_key: Option<String>,
     }
     Json(ServerInfo {
-        master_api_key: state.master_api_key.clone(),
+        master_api_key: state.master_api_key.as_ref().map(|k| k.read().clone()),
     })
 }
 

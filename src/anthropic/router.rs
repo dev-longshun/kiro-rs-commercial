@@ -1,11 +1,14 @@
 //! Anthropic API 路由配置
 
+use std::sync::Arc;
+
 use axum::{
     Router,
     extract::DefaultBodyLimit,
     middleware,
     routing::{get, post},
 };
+use parking_lot::RwLock;
 use tower_http::trace::TraceLayer;
 
 use crate::kiro::provider::KiroProvider;
@@ -36,7 +39,7 @@ const MAX_BODY_SIZE: usize = 200 * 1024 * 1024;
 
 /// 创建带有 KiroProvider 的 Anthropic API 路由
 pub fn create_router_with_provider(
-    api_key: impl Into<String>,
+    api_key: Arc<RwLock<String>>,
     kiro_provider: Option<KiroProvider>,
     profile_arn: Option<String>,
 ) -> Router {

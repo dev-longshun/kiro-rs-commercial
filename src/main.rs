@@ -71,6 +71,7 @@ async fn main() {
         tracing::error!("配置文件中未设置 apiKey");
         std::process::exit(1);
     });
+    let api_key_shared = Arc::new(parking_lot::RwLock::new(api_key.clone()));
 
     // 构建代理配置
     let proxy_config = config.proxy_url.as_ref().map(|url| {
@@ -146,7 +147,7 @@ async fn main() {
         (None, None)
     };
 
-    let mut anthropic_app_state = anthropic::middleware::AppState::new(&api_key)
+    let mut anthropic_app_state = anthropic::middleware::AppState::new(api_key_shared.clone())
         .with_rpm_tracker(rpm_tracker.clone());
     if let Some(ref manager) = api_key_manager {
         anthropic_app_state = anthropic_app_state.with_api_key_manager(manager.clone());
@@ -168,9 +169,11 @@ async fn main() {
             anthropic_app
         } else {
             let admin_service = admin::AdminService::new(token_manager.clone());
-            let mut admin_state = admin::AdminState::new(admin_key, admin_service)
-                .with_master_api_key(&api_key)
-                .with_rpm_tracker(rpm_tracker.clone());
+            let admin_api_key_shared = Arc::new(parking_lot::RwLock::new(admin_key.clone()));
+            let mut admin_state = admin::AdminState::new(admin_api_key_shared, admin_service)
+                .with_master_api_key(api_key_shared.clone())
+                .with_rpm_tracker(rpm_tracker.clone())
+                .with_config_path(std::path::PathBuf::from(&config_path));
             if let Some(ref manager) = api_key_manager {
                 admin_state = admin_state.with_api_key_manager(manager.clone());
             }

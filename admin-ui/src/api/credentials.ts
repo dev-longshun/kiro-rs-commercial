@@ -170,3 +170,15 @@ export async function getRpm(): Promise<RpmSnapshot> {
   const { data } = await api.get<RpmSnapshot>('/rpm')
   return data
 }
+
+// ============ 认证密钥管理 ============
+
+export async function getAuthKeys(): Promise<{ apiKey: string; adminApiKey: string }> {
+  const { data } = await api.get<{ apiKey: string; adminApiKey: string }>('/config/auth-keys')
+  return data
+}
+
+export async function setAuthKeys(payload: { apiKey?: string; adminApiKey?: string }): Promise<{ success: boolean; message: string }> {
+  const { data } = await api.put<{ success: boolean; message: string }>('/config/auth-keys', payload)
+  return data
+}

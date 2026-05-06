@@ -1,5 +1,6 @@
 //! Admin API 中间件
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -9,6 +10,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
+use parking_lot::RwLock;
 
 use super::service::AdminService;
 use super::types::AdminErrorResponse;
@@ -20,10 +22,10 @@ use crate::model::usage::UsageTracker;
 /// Admin API 共享状态
 #[derive(Clone)]
 pub struct AdminState {
-    /// Admin API 密钥
-    pub admin_api_key: String,
-    /// 主 API 密钥（用于前端展示）
-    pub master_api_key: Option<String>,
+    /// Admin API 密钥（运行时可修改）
+    pub admin_api_key: Arc<RwLock<String>>,
+    /// 主 API 密钥（用于前端展示，运行时可修改）
+    pub master_api_key: Option<Arc<RwLock<String>>>,
     /// Admin 服务
     pub service: Arc<AdminService>,
     /// API Key 管理器（可选）
@@ -32,22 +34,25 @@ pub struct AdminState {
     pub usage_tracker: Option<Arc<UsageTracker>>,
     /// RPM 追踪器（可选）
     pub rpm_tracker: Option<Arc<RpmTracker>>,
+    /// 配置文件路径（用于持久化修改）
+    pub config_path: Option<PathBuf>,
 }
 
 impl AdminState {
-    pub fn new(admin_api_key: impl Into<String>, service: AdminService) -> Self {
+    pub fn new(admin_api_key: Arc<RwLock<String>>, service: AdminService) -> Self {
         Self {
-            admin_api_key: admin_api_key.into(),
+            admin_api_key,
             master_api_key: None,
             service: Arc::new(service),
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
+            config_path: None,
         }
     }
 
-    pub fn with_master_api_key(mut self, key: impl Into<String>) -> Self {
-        self.master_api_key = Some(key.into());
+    pub fn with_master_api_key(mut self, key: Arc<RwLock<String>>) -> Self {
+        self.master_api_key = Some(key);
         self
     }
 
@@ -65,6 +70,11 @@ impl AdminState {
         self.rpm_tracker = Some(tracker);
         self
     }
+
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
+    }
 }
 
 /// Admin API 认证中间件
@@ -76,7 +86,7 @@ pub async fn admin_auth_middleware(
     let api_key = auth::extract_api_key(&request);
 
     match api_key {
-        Some(key) if auth::constant_time_eq(&key, &state.admin_api_key) => next.run(request).await,
+        Some(key) if auth::constant_time_eq(&key, &state.admin_api_key.read()) => next.run(request).await,
         _ => {
             let error = AdminErrorResponse::authentication_error();
             (StatusCode::UNAUTHORIZED, Json(error)).into_response()

@@ -137,3 +137,88 @@ pub async fn set_load_balancing_mode(
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }
 }
+
+/// 将 API Key 脱敏显示（保留前半部分 + ***）
+fn mask_key(key: &str) -> String {
+    let visible = key.len() / 2;
+    format!("{}***", &key[..visible])
+}
+
+/// GET /api/admin/config/auth-keys
+/// 获取当前认证密钥（脱敏显示）
+pub async fn get_auth_keys(State(state): State<AdminState>) -> impl IntoResponse {
+    let api_key = state
+        .master_api_key
+        .as_ref()
+        .map(|k| mask_key(&k.read()))
+        .unwrap_or_default();
+    let admin_api_key = mask_key(&state.admin_api_key.read());
+
+    Json(super::types::AuthKeysResponse {
+        api_key,
+        admin_api_key,
+    })
+}
+
+/// PUT /api/admin/config/auth-keys
+/// 修改认证密钥（运行时生效并持久化到 config.json）
+pub async fn set_auth_keys(
+    State(state): State<AdminState>,
+    Json(payload): Json<super::types::SetAuthKeysRequest>,
+) -> impl IntoResponse {
+    // 验证输入
+    if let Some(ref key) = payload.api_key {
+        if key.trim().is_empty() {
+            let error = super::types::AdminErrorResponse::invalid_request("apiKey 不能为空");
+            return (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response();
+        }
+    }
+    if let Some(ref key) = payload.admin_api_key {
+        if key.trim().is_empty() {
+            let error = super::types::AdminErrorResponse::invalid_request("adminApiKey 不能为空");
+            return (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response();
+        }
+    }
+
+    // 更新运行时值
+    if let Some(ref new_api_key) = payload.api_key {
+        if let Some(ref master_key) = state.master_api_key {
+            *master_key.write() = new_api_key.clone();
+        }
+    }
+    if let Some(ref new_admin_key) = payload.admin_api_key {
+        *state.admin_api_key.write() = new_admin_key.clone();
+    }
+
+    // 持久化到 config.json
+    if let Some(ref config_path) = state.config_path {
+        if let Err(e) = persist_auth_keys(config_path, &payload.api_key, &payload.admin_api_key) {
+            tracing::error!("持久化认证密钥失败: {}", e);
+            let error = super::types::AdminErrorResponse::internal_error("持久化失败，但运行时已生效");
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!(error))).into_response();
+        }
+    }
+
+    Json(SuccessResponse::new("认证密钥已更新")).into_response()
+}
+
+/// 将修改后的密钥写回 config.json
+fn persist_auth_keys(
+    config_path: &std::path::Path,
+    new_api_key: &Option<String>,
+    new_admin_api_key: &Option<String>,
+) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut json: serde_json::Value = serde_json::from_str(&content)?;
+
+    if let Some(key) = new_api_key {
+        json["apiKey"] = serde_json::Value::String(key.clone());
+    }
+    if let Some(key) = new_admin_api_key {
+        json["adminApiKey"] = serde_json::Value::String(key.clone());
+    }
+
+    let output = serde_json::to_string_pretty(&json)?;
+    std::fs::write(config_path, output)?;
+    Ok(())
+}

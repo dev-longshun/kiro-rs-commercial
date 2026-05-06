@@ -18,6 +18,8 @@ import {
   getAllUsage,
   resetKeyUsage,
   getRpm,
+  getAuthKeys,
+  setAuthKeys,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 
@@ -210,5 +212,24 @@ export function useRpm() {
     queryKey: ['rpm'],
     queryFn: getRpm,
     refetchInterval: 5000,
+  })
+}
+
+// ============ 认证密钥 Hooks ============
+
+export function useAuthKeys() {
+  return useQuery({
+    queryKey: ['auth-keys'],
+    queryFn: getAuthKeys,
+  })
+}
+
+export function useSetAuthKeys() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { apiKey?: string; adminApiKey?: string }) => setAuthKeys(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auth-keys'] })
+    },
   })
 }

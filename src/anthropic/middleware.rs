@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
+use parking_lot::RwLock;
 
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
@@ -30,8 +31,8 @@ pub struct ApiKeyContext {
 /// 应用共享状态
 #[derive(Clone)]
 pub struct AppState {
-    /// 主 API 密钥（始终有效，不可禁用）
-    pub api_key: String,
+    /// 主 API 密钥（始终有效，不可禁用，运行时可修改）
+    pub api_key: Arc<RwLock<String>>,
     /// Kiro Provider（可选，用于实际 API 调用）
     pub kiro_provider: Option<Arc<KiroProvider>>,
     /// Profile ARN（可选，用于请求）
@@ -46,9 +47,9 @@ pub struct AppState {
 
 impl AppState {
     /// 创建新的应用状态
-    pub fn new(api_key: impl Into<String>) -> Self {
+    pub fn new(api_key: Arc<RwLock<String>>) -> Self {
         Self {
-            api_key: api_key.into(),
+            api_key,
             kiro_provider: None,
             profile_arn: None,
             api_key_manager: None,
@@ -105,7 +106,7 @@ pub async fn auth_middleware(
     };
 
     // 1. 主密钥匹配 → 直接放行
-    if auth::constant_time_eq(&key, &state.api_key) {
+    if auth::constant_time_eq(&key, &state.api_key.read()) {
         request.extensions_mut().insert(ApiKeyContext {
             id: 0,
             spending_limit: None,

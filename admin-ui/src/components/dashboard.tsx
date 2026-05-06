@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key } from 'lucide-react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Settings } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -13,7 +13,8 @@ import { BatchImportDialog } from '@/components/batch-import-dialog'
 import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useLoadBalancingMode, useSetLoadBalancingMode, useRpm } from '@/hooks/use-credentials'
+import { SettingsPanel } from '@/components/settings-panel'
+import { useCredentials, useDeleteCredential, useResetFailure, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -23,7 +24,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys'>('credentials')
+  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'settings'>('credentials')
   const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null)
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -53,8 +54,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { data: rpmData } = useRpm()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
-  const { data: loadBalancingData, isLoading: isLoadingMode } = useLoadBalancingMode()
-  const { mutate: setLoadBalancingMode, isPending: isSettingMode } = useSetLoadBalancingMode()
 
   // 计算分页
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
@@ -448,21 +447,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
   }
 
   // 切换负载均衡模式
-  const handleToggleLoadBalancing = () => {
-    const currentMode = loadBalancingData?.mode || 'priority'
-    const newMode = currentMode === 'priority' ? 'balanced' : 'priority'
-
-    setLoadBalancingMode(newMode, {
-      onSuccess: () => {
-        const modeName = newMode === 'priority' ? '优先级模式' : '均衡负载模式'
-        toast.success(`已切换到${modeName}`)
-      },
-      onError: (error) => {
-        toast.error(`切换失败: ${extractErrorMessage(error)}`)
-      }
-    })
-  }
-
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -520,19 +504,18 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <Key className="h-3 w-3 sm:mr-1" />
                 <span className="hidden sm:inline">API Keys</span>
               </Button>
+              <Button
+                variant={activeTab === 'settings' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveTab('settings')}
+                className="h-7 px-2 sm:px-3 text-xs"
+              >
+                <Settings className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">设置</span>
+              </Button>
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleToggleLoadBalancing}
-              disabled={isLoadingMode || isSettingMode}
-              title="切换负载均衡模式"
-              className="hidden sm:inline-flex"
-            >
-              {isLoadingMode ? '加载中...' : (loadBalancingData?.mode === 'priority' ? '优先级模式' : '均衡负载')}
-            </Button>
             <Button variant="ghost" size="icon" onClick={toggleDarkMode}>
               {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
@@ -548,7 +531,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
       {/* 主内容 */}
       <main className="container mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6">
-        {activeTab === 'apikeys' ? (
+        {activeTab === 'settings' ? (
+          <SettingsPanel />
+        ) : activeTab === 'apikeys' ? (
           <ApiKeysPanel />
         ) : (
         <>
