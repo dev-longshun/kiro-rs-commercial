@@ -62,11 +62,20 @@ pub async fn ping(request: axum::http::Request<Body>) -> impl IntoResponse {
 
 /// 将 KiroProvider 错误映射为 HTTP 响应
 fn map_provider_error(err: Error) -> Response {
+    map_provider_error_with_context(err, "", 0)
+}
+
+fn map_provider_error_with_context(err: Error, model: &str, estimated_input_tokens: i32) -> Response {
     let err_str = err.to_string();
 
     // 上下文窗口满了（对话历史累积超出模型上下文窗口限制）
     if err_str.contains("CONTENT_LENGTH_EXCEEDS_THRESHOLD") {
-        tracing::warn!(error = %err, "上游拒绝请求：上下文窗口已满（不应重试）");
+        tracing::warn!(
+            error = %err,
+            model = %model,
+            estimated_input_tokens = estimated_input_tokens,
+            "上游拒绝请求：上下文窗口已满（不应重试）— 请检查是否真正达到 1M 上下文限制"
+        );
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse::new(
@@ -457,7 +466,7 @@ async fn handle_stream_request(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api_stream(request_body).await {
         Ok(resp) => resp,
-        Err(e) => return map_provider_error(e),
+        Err(e) => return map_provider_error_with_context(e, model, input_tokens),
     };
 
     // 创建流处理上下文
@@ -580,8 +589,8 @@ fn create_sse_stream(
     initial_stream.chain(processing_stream)
 }
 
-/// 上下文窗口大小（200k tokens）
-const CONTEXT_WINDOW_SIZE: i32 = 200_000;
+/// 上下文窗口大小（1M tokens）
+const CONTEXT_WINDOW_SIZE: i32 = 1_000_000;
 
 /// 处理非流式请求
 async fn handle_non_stream_request(
@@ -595,7 +604,7 @@ async fn handle_non_stream_request(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api(request_body).await {
         Ok(resp) => resp,
-        Err(e) => return map_provider_error(e),
+        Err(e) => return map_provider_error_with_context(e, model, input_tokens),
     };
 
     // 读取响应体
@@ -970,7 +979,7 @@ async fn handle_stream_request_buffered(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api_stream(request_body).await {
         Ok(resp) => resp,
-        Err(e) => return map_provider_error(e),
+        Err(e) => return map_provider_error_with_context(e, model, estimated_input_tokens),
     };
 
     // 创建缓冲流处理上下文

@@ -68,10 +68,10 @@ fn get_model_pricing(model: &str) -> ModelPricing {
     let model_lower = model.to_lowercase();
 
     if model_lower.contains("opus") {
-        // Opus 4: $15 / $75
+        // Opus 4.5+: $5 / $25
         ModelPricing {
-            input_per_mtok: 15.0,
-            output_per_mtok: 75.0,
+            input_per_mtok: 5.0,
+            output_per_mtok: 25.0,
         }
     } else if model_lower.contains("haiku") {
         // Haiku 4.5: $1 / $5

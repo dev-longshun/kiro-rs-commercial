@@ -455,8 +455,8 @@ impl SseStateManager {
     }
 }
 
-/// 上下文窗口大小（200k tokens）
-const CONTEXT_WINDOW_SIZE: i32 = 200_000;
+/// 上下文窗口大小（1M tokens）
+const CONTEXT_WINDOW_SIZE: i32 = 1_000_000;
 
 /// 流处理上下文
 pub struct StreamContext {
