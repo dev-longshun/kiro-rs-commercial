@@ -74,7 +74,8 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          no-cache: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           push: true
           provenance: false
           tags: |
