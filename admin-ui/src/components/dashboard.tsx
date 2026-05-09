@@ -39,6 +39,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [loadingBalanceIds, setLoadingBalanceIds] = useState<Set<number>>(new Set())
   const [queryingInfo, setQueryingInfo] = useState(false)
   const [queryInfoProgress, setQueryInfoProgress] = useState({ current: 0, total: 0 })
+  const [liveCreditsTotal, setLiveCreditsTotal] = useState<number | null>(null)
+  const [liveCreditsQueried, setLiveCreditsQueried] = useState(0)
   const cancelVerifyRef = useRef(false)
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 12
@@ -313,9 +315,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
     setQueryingInfo(true)
     setQueryInfoProgress({ current: 0, total: ids.length })
+    setLiveCreditsTotal(0)
+    setLiveCreditsQueried(0)
 
     let successCount = 0
     let failCount = 0
+    let runningTotal = 0
 
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i]
@@ -329,14 +334,19 @@ export function Dashboard({ onLogout }: DashboardProps) {
       try {
         const balance = await getCredentialBalance(id)
         successCount++
+        runningTotal += balance.remaining
 
         setBalanceMap(prev => {
           const next = new Map(prev)
           next.set(id, balance)
           return next
         })
+
+        setLiveCreditsTotal(runningTotal)
+        setLiveCreditsQueried(i + 1)
       } catch (error) {
         failCount++
+        setLiveCreditsQueried(i + 1)
       } finally {
         setLoadingBalanceIds(prev => {
           const next = new Set(prev)
@@ -562,14 +572,28 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                当前活跃
+                全局积分
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold flex items-center gap-2">
-                #{data?.currentId || '-'}
-                <Badge variant="success">活跃</Badge>
+              <div className="text-2xl font-bold text-orange-600">
+                {liveCreditsTotal !== null ? liveCreditsTotal.toFixed(1) : '-'}
               </div>
+              {liveCreditsTotal !== null && (
+                <div className="mt-1 space-y-1">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{liveCreditsQueried}/{data?.credentials.length || 0} 已查询</span>
+                  </div>
+                  {queryingInfo && (
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-orange-500 transition-all duration-300"
+                        style={{ width: `${(data?.credentials.length || 0) > 0 ? (liveCreditsQueried / (data?.credentials.length || 1)) * 100 : 0}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card>
