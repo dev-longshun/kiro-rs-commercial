@@ -297,19 +297,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
     deselectAll()
   }
 
-  // 查询当前页凭据信息（逐个查询，避免瞬时并发）
+  // 查询所有凭据信息（逐个查询，避免瞬时并发）
   const handleQueryCurrentPageInfo = async () => {
-    if (currentCredentials.length === 0) {
-      toast.error('当前页没有可查询的凭据')
+    const allCredentials = data?.credentials || []
+
+    if (allCredentials.length === 0) {
+      toast.error('没有可查询的凭据')
       return
     }
 
-    const ids = currentCredentials
+    const ids = allCredentials
       .filter(credential => !credential.disabled)
       .map(credential => credential.id)
 
     if (ids.length === 0) {
-      toast.error('当前页没有可查询的启用凭据')
+      toast.error('没有可查询的启用凭据')
       return
     }
 
