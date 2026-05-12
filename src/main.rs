@@ -1,6 +1,7 @@
 mod admin;
 mod admin_ui;
 mod anthropic;
+mod cache;
 mod common;
 mod http_client;
 mod kiro;
