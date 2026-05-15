@@ -229,6 +229,20 @@ pub fn map_model(model: &str) -> Option<String> {
         }
     } else if model_lower.contains("haiku") {
         Some("claude-haiku-4.5".to_string())
+    } else if model_lower == "auto" {
+        Some("auto".to_string())
+    } else if model_lower.contains("deepseek") {
+        Some("deepseek-3.2".to_string())
+    } else if model_lower.contains("glm") {
+        Some("glm-5".to_string())
+    } else if model_lower.contains("minimax") {
+        if model_lower.contains("2.5") || model_lower.contains("2-5") {
+            Some("minimax-m2.5".to_string())
+        } else {
+            Some("minimax-m2.1".to_string())
+        }
+    } else if model_lower.contains("qwen") {
+        Some("qwen3-coder-next".to_string())
     } else {
         None
     }
