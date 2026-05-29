@@ -345,6 +345,10 @@ async fn refresh_idc_token(
         new_credentials.expires_at = Some(expires_at.to_rfc3339());
     }
 
+    if let Some(profile_arn) = data.profile_arn {
+        new_credentials.profile_arn = Some(profile_arn);
+    }
+
     Ok(new_credentials)
 }
 

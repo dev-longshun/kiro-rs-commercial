@@ -161,6 +161,19 @@ impl KiroProvider {
 
     /// 构建请求头
     ///
+    /// 将凭据的 profile_arn 注入到请求体 JSON 中
+    fn inject_profile_arn(request_body: &str, profile_arn: &Option<String>) -> String {
+        if let Some(arn) = profile_arn {
+            if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(request_body) {
+                json["profileArn"] = serde_json::Value::String(arn.clone());
+                if let Ok(body) = serde_json::to_string(&json) {
+                    return body;
+                }
+            }
+        }
+        request_body.to_string()
+    }
+
     /// # Arguments
     /// * `ctx` - API 调用上下文，包含凭据和 token
     fn build_headers(&self, ctx: &CallContext) -> anyhow::Result<HeaderMap> {
@@ -330,11 +343,12 @@ impl KiroProvider {
             };
 
             // 发送请求
+            let body = Self::inject_profile_arn(request_body, &ctx.credentials.profile_arn);
             let response = match self
                 .client_for(&ctx.credentials)?
                 .post(&url)
                 .headers(headers)
-                .body(request_body.to_string())
+                .body(body)
                 .send()
                 .await
             {
@@ -483,11 +497,12 @@ impl KiroProvider {
             };
 
             // 发送请求
+            let body = Self::inject_profile_arn(request_body, &ctx.credentials.profile_arn);
             let response = match self
                 .client_for(&ctx.credentials)?
                 .post(&url)
                 .headers(headers)
-                .body(request_body.to_string())
+                .body(body.clone())
                 .send()
                 .await
             {

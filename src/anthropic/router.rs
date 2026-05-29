@@ -42,14 +42,10 @@ const MAX_BODY_SIZE: usize = 200 * 1024 * 1024;
 pub fn create_router_with_provider(
     api_key: Arc<RwLock<String>>,
     kiro_provider: Option<KiroProvider>,
-    profile_arn: Option<String>,
 ) -> Router {
     let mut state = AppState::new(api_key);
     if let Some(provider) = kiro_provider {
         state = state.with_kiro_provider(provider);
-    }
-    if let Some(arn) = profile_arn {
-        state = state.with_profile_arn(arn);
     }
     build_router(state)
 }
@@ -58,13 +54,9 @@ pub fn create_router_with_provider(
 pub fn create_router_with_provider_and_state(
     mut state: AppState,
     kiro_provider: Option<KiroProvider>,
-    profile_arn: Option<String>,
 ) -> Router {
     if let Some(provider) = kiro_provider {
         state = state.with_kiro_provider(provider);
-    }
-    if let Some(arn) = profile_arn {
-        state = state.with_profile_arn(arn);
     }
     build_router(state)
 }

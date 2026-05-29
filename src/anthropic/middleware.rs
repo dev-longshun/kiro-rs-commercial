@@ -35,8 +35,6 @@ pub struct AppState {
     pub api_key: Arc<RwLock<String>>,
     /// Kiro Provider（可选，用于实际 API 调用）
     pub kiro_provider: Option<Arc<KiroProvider>>,
-    /// Profile ARN（可选，用于请求）
-    pub profile_arn: Option<String>,
     /// API Key 管理器（可选，启用多用户 API Key）
     pub api_key_manager: Option<Arc<ApiKeyManager>>,
     /// 用量追踪器（可选，启用用量追踪）
@@ -51,7 +49,6 @@ impl AppState {
         Self {
             api_key,
             kiro_provider: None,
-            profile_arn: None,
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
@@ -61,12 +58,6 @@ impl AppState {
     /// 设置 KiroProvider
     pub fn with_kiro_provider(mut self, provider: KiroProvider) -> Self {
         self.kiro_provider = Some(Arc::new(provider));
-        self
-    }
-
-    /// 设置 Profile ARN
-    pub fn with_profile_arn(mut self, arn: impl Into<String>) -> Self {
-        self.profile_arn = Some(arn.into());
         self
     }
 

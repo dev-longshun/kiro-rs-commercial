@@ -160,7 +160,6 @@ async fn main() {
     let anthropic_app = anthropic::create_router_with_provider_and_state(
         anthropic_app_state,
         Some(kiro_provider),
-        first_credentials.profile_arn.clone(),
     );
 
     // 构建 Admin API 路由（如果配置了非空的 admin_api_key）
