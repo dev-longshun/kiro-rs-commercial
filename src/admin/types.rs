@@ -358,3 +358,31 @@ pub struct SetAuthKeysRequest {
     #[serde(default)]
     pub admin_api_key: Option<String>,
 }
+
+// ============ 缓存模拟配置 ============
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSimulationConfigResponse {
+    pub enabled: bool,
+    pub read_ratio: f64,
+    pub creation_ratio: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCacheSimulationConfigRequest {
+    pub enabled: bool,
+    #[serde(default = "default_read_ratio")]
+    pub read_ratio: f64,
+    #[serde(default = "default_creation_ratio")]
+    pub creation_ratio: f64,
+}
+
+fn default_read_ratio() -> f64 {
+    0.20
+}
+
+fn default_creation_ratio() -> f64 {
+    0.10
+}

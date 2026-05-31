@@ -540,6 +540,12 @@ pub struct MultiTokenManager {
     stats_dirty: AtomicBool,
     /// Round-Robin 计数器（balanced 模式下用于均匀轮转凭据）
     rr_counter: AtomicU64,
+    /// 缓存模拟开关
+    cache_simulation_enabled: Mutex<bool>,
+    /// 缓存读取比例
+    cache_read_ratio: Mutex<f64>,
+    /// 缓存写入比例
+    cache_creation_ratio: Mutex<f64>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -639,6 +645,9 @@ impl MultiTokenManager {
             .unwrap_or(0);
 
         let load_balancing_mode = config.load_balancing_mode.clone();
+        let cache_simulation_enabled = config.cache_simulation_enabled;
+        let cache_read_ratio = config.cache_read_ratio;
+        let cache_creation_ratio = config.cache_creation_ratio;
         let manager = Self {
             config,
             proxy,
@@ -651,6 +660,9 @@ impl MultiTokenManager {
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
             rr_counter: AtomicU64::new(0),
+            cache_simulation_enabled: Mutex::new(cache_simulation_enabled),
+            cache_read_ratio: Mutex::new(cache_read_ratio),
+            cache_creation_ratio: Mutex::new(cache_creation_ratio),
         };
 
         // 如果有新分配的 ID 或新生成的 machineId，立即持久化到配置文件
@@ -1830,6 +1842,86 @@ impl MultiTokenManager {
         }
 
         tracing::info!("负载均衡模式已设置为: {}", mode);
+        Ok(())
+    }
+
+    // ============ 缓存模拟配置 ============
+
+    pub fn get_cache_simulation_enabled(&self) -> bool {
+        *self.cache_simulation_enabled.lock()
+    }
+
+    pub fn get_cache_read_ratio(&self) -> f64 {
+        *self.cache_read_ratio.lock()
+    }
+
+    pub fn get_cache_creation_ratio(&self) -> f64 {
+        *self.cache_creation_ratio.lock()
+    }
+
+    pub fn set_cache_simulation_config(
+        &self,
+        enabled: bool,
+        read_ratio: f64,
+        creation_ratio: f64,
+    ) -> anyhow::Result<()> {
+        if read_ratio < 0.0 || read_ratio > 1.0 {
+            anyhow::bail!("缓存读取比例必须在 0.0~1.0 之间，当前值: {}", read_ratio);
+        }
+        if creation_ratio < 0.0 || creation_ratio > 1.0 {
+            anyhow::bail!("缓存写入比例必须在 0.0~1.0 之间，当前值: {}", creation_ratio);
+        }
+        if read_ratio + creation_ratio > 1.0 {
+            anyhow::bail!(
+                "缓存读取 + 写入比例之和不能超过 1.0，当前值: {} + {} = {}",
+                read_ratio,
+                creation_ratio,
+                read_ratio + creation_ratio
+            );
+        }
+
+        *self.cache_simulation_enabled.lock() = enabled;
+        *self.cache_read_ratio.lock() = read_ratio;
+        *self.cache_creation_ratio.lock() = creation_ratio;
+
+        if let Err(err) = self.persist_cache_simulation_config(enabled, read_ratio, creation_ratio) {
+            tracing::warn!("缓存模拟配置持久化失败，仅当前进程生效: {}", err);
+        }
+
+        tracing::info!(
+            "缓存模拟配置已更新: enabled={}, read_ratio={}, creation_ratio={}",
+            enabled,
+            read_ratio,
+            creation_ratio
+        );
+        Ok(())
+    }
+
+    fn persist_cache_simulation_config(
+        &self,
+        enabled: bool,
+        read_ratio: f64,
+        creation_ratio: f64,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        let config_path = match self.config.config_path() {
+            Some(path) => path.to_path_buf(),
+            None => {
+                tracing::warn!("配置文件路径未知，缓存模拟配置仅在当前进程生效");
+                return Ok(());
+            }
+        };
+
+        let mut config = Config::load(&config_path)
+            .with_context(|| format!("重新加载配置失败: {}", config_path.display()))?;
+        config.cache_simulation_enabled = enabled;
+        config.cache_read_ratio = read_ratio;
+        config.cache_creation_ratio = creation_ratio;
+        config
+            .save()
+            .with_context(|| format!("持久化缓存模拟配置失败: {}", config_path.display()))?;
+
         Ok(())
     }
 }

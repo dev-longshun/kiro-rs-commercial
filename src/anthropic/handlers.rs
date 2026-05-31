@@ -519,11 +519,7 @@ pub async fn post_messages(
     let usage_tracker = state.usage_tracker.clone();
 
     // 计算 prompt cache 模拟 usage
-    let prompt_cache_usage = crate::cache::PromptCacheUsage::from_ratio_config(
-        input_tokens,
-        crate::cache::CacheSimulationRatioConfig::fixed(0.85),
-        0.1,
-    );
+    let prompt_cache_usage = compute_cache_usage(input_tokens, &state);
 
     if payload.stream {
         // 流式响应
@@ -1050,11 +1046,7 @@ pub async fn post_messages_cc(
     let usage_tracker = state.usage_tracker.clone();
 
     // 计算 prompt cache 模拟 usage
-    let prompt_cache_usage = crate::cache::PromptCacheUsage::from_ratio_config(
-        input_tokens,
-        crate::cache::CacheSimulationRatioConfig::fixed(0.85),
-        0.1,
-    );
+    let prompt_cache_usage = compute_cache_usage(input_tokens, &state);
 
     if payload.stream {
         // 流式响应（缓冲模式）
@@ -1211,4 +1203,35 @@ fn create_buffered_sse_stream(
         },
     )
     .flatten()
+}
+
+fn compute_cache_usage(
+    input_tokens: i32,
+    state: &super::middleware::AppState,
+) -> crate::cache::PromptCacheUsage {
+    let enabled = state
+        .token_manager
+        .as_ref()
+        .map(|tm| tm.get_cache_simulation_enabled())
+        .unwrap_or(false);
+
+    if !enabled {
+        return crate::cache::PromptCacheUsage::uncached(input_tokens);
+    }
+
+    let tm = state.token_manager.as_ref().unwrap();
+    let read_ratio = tm.get_cache_read_ratio();
+    let creation_ratio = tm.get_cache_creation_ratio();
+    let total_cache_ratio = read_ratio + creation_ratio;
+    let creation_fraction = if total_cache_ratio > 0.0 {
+        creation_ratio / total_cache_ratio
+    } else {
+        0.0
+    };
+
+    crate::cache::PromptCacheUsage::from_ratio_config(
+        input_tokens,
+        crate::cache::CacheSimulationRatioConfig::fixed(total_cache_ratio),
+        creation_fraction,
+    )
 }

@@ -13,6 +13,7 @@ use parking_lot::RwLock;
 
 use crate::common::auth;
 use crate::kiro::provider::KiroProvider;
+use crate::kiro::token_manager::MultiTokenManager;
 use crate::model::api_key::{ApiKeyAuthResult, ApiKeyManager};
 use crate::model::rpm::RpmTracker;
 use crate::model::usage::UsageTracker;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub usage_tracker: Option<Arc<UsageTracker>>,
     /// RPM 追踪器（可选，启用 RPM 实时监控）
     pub rpm_tracker: Option<Arc<RpmTracker>>,
+    /// Token 管理器（用于读取缓存模拟配置）
+    pub token_manager: Option<Arc<MultiTokenManager>>,
 }
 
 impl AppState {
@@ -52,6 +55,7 @@ impl AppState {
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
+            token_manager: None,
         }
     }
 
@@ -76,6 +80,12 @@ impl AppState {
     /// 设置 RPM 追踪器
     pub fn with_rpm_tracker(mut self, tracker: Arc<RpmTracker>) -> Self {
         self.rpm_tracker = Some(tracker);
+        self
+    }
+
+    /// 设置 Token 管理器
+    pub fn with_token_manager(mut self, tm: Arc<MultiTokenManager>) -> Self {
+        self.token_manager = Some(tm);
         self
     }
 }

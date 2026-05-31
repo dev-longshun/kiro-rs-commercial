@@ -182,3 +182,21 @@ export async function setAuthKeys(payload: { apiKey?: string; adminApiKey?: stri
   const { data } = await api.put<{ success: boolean; message: string }>('/config/auth-keys', payload)
   return data
 }
+
+// ============ 缓存模拟配置 ============
+
+export interface CacheSimulationConfig {
+  enabled: boolean
+  readRatio: number
+  creationRatio: number
+}
+
+export async function getCacheSimulationConfig(): Promise<CacheSimulationConfig> {
+  const { data } = await api.get<CacheSimulationConfig>('/config/cache-simulation')
+  return data
+}
+
+export async function setCacheSimulationConfig(config: CacheSimulationConfig): Promise<CacheSimulationConfig> {
+  const { data } = await api.put<CacheSimulationConfig>('/config/cache-simulation', config)
+  return data
+}

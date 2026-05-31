@@ -9,7 +9,8 @@ use axum::{
 use super::{
     middleware::AdminState,
     types::{
-        AddCredentialRequest, SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
+        AddCredentialRequest, CacheSimulationConfigResponse, SetCacheSimulationConfigRequest,
+        SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
         SuccessResponse, UpdateCredentialRequest,
     },
 };
@@ -200,6 +201,38 @@ pub async fn set_auth_keys(
     }
 
     Json(SuccessResponse::new("认证密钥已更新")).into_response()
+}
+
+/// GET /api/admin/config/cache-simulation
+pub async fn get_cache_simulation_config(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
+    let tm = state.service.token_manager();
+    Json(CacheSimulationConfigResponse {
+        enabled: tm.get_cache_simulation_enabled(),
+        read_ratio: tm.get_cache_read_ratio(),
+        creation_ratio: tm.get_cache_creation_ratio(),
+    })
+}
+
+/// PUT /api/admin/config/cache-simulation
+pub async fn set_cache_simulation_config(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetCacheSimulationConfigRequest>,
+) -> impl IntoResponse {
+    let tm = state.service.token_manager();
+    match tm.set_cache_simulation_config(payload.enabled, payload.read_ratio, payload.creation_ratio) {
+        Ok(()) => Json(CacheSimulationConfigResponse {
+            enabled: payload.enabled,
+            read_ratio: payload.read_ratio,
+            creation_ratio: payload.creation_ratio,
+        })
+        .into_response(),
+        Err(e) => {
+            let error = super::types::AdminErrorResponse::internal_error(&e.to_string());
+            (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response()
+        }
+    }
 }
 
 /// 将修改后的密钥写回 config.json

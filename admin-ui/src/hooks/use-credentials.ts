@@ -20,8 +20,11 @@ import {
   getRpm,
   getAuthKeys,
   setAuthKeys,
+  getCacheSimulationConfig,
+  setCacheSimulationConfig,
 } from '@/api/credentials'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
+import type { CacheSimulationConfig } from '@/api/credentials'
 
 // 查询凭据列表
 export function useCredentials() {
@@ -230,6 +233,25 @@ export function useSetAuthKeys() {
     mutationFn: (payload: { apiKey?: string; adminApiKey?: string }) => setAuthKeys(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auth-keys'] })
+    },
+  })
+}
+
+// ============ 缓存模拟配置 Hooks ============
+
+export function useCacheSimulationConfig() {
+  return useQuery({
+    queryKey: ['cache-simulation-config'],
+    queryFn: getCacheSimulationConfig,
+  })
+}
+
+export function useSetCacheSimulationConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (config: CacheSimulationConfig) => setCacheSimulationConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cache-simulation-config'] })
     },
   })
 }

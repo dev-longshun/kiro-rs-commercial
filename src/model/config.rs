@@ -91,6 +91,18 @@ pub struct Config {
     #[serde(default = "default_load_balancing_mode")]
     pub load_balancing_mode: String,
 
+    /// 缓存模拟开关（默认关闭）
+    #[serde(default)]
+    pub cache_simulation_enabled: bool,
+
+    /// 缓存读取比例（0.0~1.0，默认 0.20）
+    #[serde(default = "default_cache_read_ratio")]
+    pub cache_read_ratio: f64,
+
+    /// 缓存写入比例（0.0~1.0，默认 0.10）
+    #[serde(default = "default_cache_creation_ratio")]
+    pub cache_creation_ratio: f64,
+
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
@@ -133,6 +145,14 @@ fn default_load_balancing_mode() -> String {
     "priority".to_string()
 }
 
+fn default_cache_read_ratio() -> f64 {
+    0.20
+}
+
+fn default_cache_creation_ratio() -> f64 {
+    0.10
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -155,6 +175,9 @@ impl Default for Config {
             proxy_password: None,
             admin_api_key: None,
             load_balancing_mode: default_load_balancing_mode(),
+            cache_simulation_enabled: false,
+            cache_read_ratio: default_cache_read_ratio(),
+            cache_creation_ratio: default_cache_creation_ratio(),
             config_path: None,
         }
     }

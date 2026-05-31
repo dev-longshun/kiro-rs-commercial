@@ -54,6 +54,10 @@ impl AdminService {
         }
     }
 
+    pub fn token_manager(&self) -> &MultiTokenManager {
+        &self.token_manager
+    }
+
     /// 获取所有凭据状态
     pub fn get_all_credentials(&self) -> CredentialsStatusResponse {
         let snapshot = self.token_manager.snapshot();

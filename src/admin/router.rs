@@ -12,9 +12,10 @@ use super::{
     },
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_auth_keys,
-        get_credential_balance, get_load_balancing_mode, reset_failure_count,
-        set_auth_keys, set_credential_disabled, set_credential_priority,
-        set_load_balancing_mode, update_credential,
+        get_cache_simulation_config, get_credential_balance, get_load_balancing_mode,
+        reset_failure_count, set_auth_keys, set_cache_simulation_config,
+        set_credential_disabled, set_credential_priority, set_load_balancing_mode,
+        update_credential,
     },
     middleware::{AdminState, admin_auth_middleware},
 };
@@ -39,6 +40,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/auth-keys",
             get(get_auth_keys).put(set_auth_keys),
+        )
+        .route(
+            "/config/cache-simulation",
+            get(get_cache_simulation_config).put(set_cache_simulation_config),
         )
         // API Key 管理
         .route("/server-info", get(get_server_info))
