@@ -49,6 +49,7 @@ pub struct Model {
     #[serde(rename = "type")]
     pub model_type: String,
     pub max_tokens: i32,
+    pub context_window: i32,
 }
 
 /// 模型列表响应

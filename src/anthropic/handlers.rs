@@ -134,6 +134,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude 3.5 Sonnet".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 8192,
+            context_window: 200_000,
         },
         Model {
             id: "claude-3-5-haiku-20241022".to_string(),
@@ -143,6 +144,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude 3.5 Haiku".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 8192,
+            context_window: 200_000,
         },
         Model {
             id: "claude-3-opus-20240229".to_string(),
@@ -152,6 +154,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude 3 Opus".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 4096,
+            context_window: 200_000,
         },
         Model {
             id: "claude-3-haiku-20240307".to_string(),
@@ -161,6 +164,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude 3 Haiku".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 4096,
+            context_window: 200_000,
         },
         Model {
             id: "claude-3-sonnet-20240229".to_string(),
@@ -170,6 +174,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude 3 Sonnet".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 4096,
+            context_window: 200_000,
         },
         // === Claude 4.x 过渡期模型 ID ===
         Model {
@@ -180,6 +185,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Sonnet 4".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 16000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-opus-4-20250514".to_string(),
@@ -189,6 +195,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 16000,
+            context_window: 200_000,
         },
         // === 当前主力模型 ===
         Model {
@@ -199,6 +206,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Sonnet 4.5".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-sonnet-4-5-20250929-thinking".to_string(),
@@ -208,6 +216,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Sonnet 4.5 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-opus-4-5-20251101".to_string(),
@@ -217,6 +226,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.5".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-opus-4-5-20251101-thinking".to_string(),
@@ -226,6 +236,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.5 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-sonnet-4-6".to_string(),
@@ -235,6 +246,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Sonnet 4.6".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-sonnet-4-6-thinking".to_string(),
@@ -244,6 +256,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Sonnet 4.6 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-6".to_string(),
@@ -253,6 +266,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.6".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-6-thinking".to_string(),
@@ -262,6 +276,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.6 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-7".to_string(),
@@ -271,6 +286,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.7".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-7-thinking".to_string(),
@@ -280,6 +296,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.7 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-8".to_string(),
@@ -289,6 +306,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.8".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-opus-4-8-thinking".to_string(),
@@ -298,6 +316,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Opus 4.8 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 1_000_000,
         },
         Model {
             id: "claude-haiku-4-5-20251001".to_string(),
@@ -307,6 +326,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Haiku 4.5".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "claude-haiku-4-5-20251001-thinking".to_string(),
@@ -316,6 +336,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Claude Haiku 4.5 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         // === 非 Claude 模型 ===
         Model {
@@ -326,6 +347,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Auto (智能路由)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "deepseek-3.2".to_string(),
@@ -335,6 +357,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "DeepSeek 3.2".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "glm-5".to_string(),
@@ -344,6 +367,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "GLM-5".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "minimax-m2.5".to_string(),
@@ -353,6 +377,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "MiniMax M2.5".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "minimax-m2.1".to_string(),
@@ -362,6 +387,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "MiniMax M2.1".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
         Model {
             id: "qwen3-coder-next".to_string(),
@@ -371,6 +397,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
             display_name: "Qwen3 Coder Next".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
+            context_window: 200_000,
         },
     ]
 }
