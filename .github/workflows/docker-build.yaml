@@ -80,7 +80,8 @@ jobs:
           provenance: false
           tags: |
             ghcr.io/${{ github.repository_owner }}/kiro-rs-commercial:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/kiro-rs-commercial:${{ steps.version.outputs.is_beta == 'true' && 'beta' || 'latest' }}
+            ghcr.io/${{ github.repository_owner }}/kiro-rs-commercial:beta
+            ${{ steps.version.outputs.is_beta != 'true' && format('ghcr.io/{0}/kiro-rs-commercial:latest', github.repository_owner) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Kiro.rs Commercial Docker Image
