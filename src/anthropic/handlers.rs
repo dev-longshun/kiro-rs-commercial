@@ -860,11 +860,9 @@ async fn handle_non_stream_request(
     let output_tokens = token::estimate_output_tokens(&content);
 
     // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
-    let raw_final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
-    let final_input_tokens = super::stream::cap_input_tokens_pub(raw_final_input_tokens, input_tokens);
+    let final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
 
-    // 对外报告的 output_tokens 限制在安全范围
-    let reported_output_tokens = output_tokens.min(380);
+    let reported_output_tokens = output_tokens;
 
     // 缩放 cache usage 到最终 input_tokens
     let usage = prompt_cache_usage.scale_to(final_input_tokens);
