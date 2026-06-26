@@ -23,6 +23,7 @@ import {
   getCacheSimulationConfig,
   setCacheSimulationConfig,
 } from '@/api/credentials'
+import { storage } from '@/lib/storage'
 import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
 import type { CacheSimulationConfig } from '@/api/credentials'
 
@@ -227,11 +228,42 @@ export function useAuthKeys() {
   })
 }
 
+type AuthKeysQueryData = {
+  apiKey: string
+  adminApiKey: string
+}
+
+type ServerInfoQueryData = {
+  masterApiKey: string | null
+}
+
+const maskAuthKeyForDisplay = (key: string) => `${key.slice(0, Math.floor(key.length / 2))}***`
+
 export function useSetAuthKeys() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (payload: { apiKey?: string; adminApiKey?: string }) => setAuthKeys(payload),
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
+      const nextApiKey = payload.apiKey?.trim()
+      const nextAdminApiKey = payload.adminApiKey?.trim()
+
+      if (nextAdminApiKey) {
+        storage.setApiKey(nextAdminApiKey)
+      }
+
+      queryClient.setQueryData<AuthKeysQueryData | undefined>(['auth-keys'], (current) => ({
+        apiKey: nextApiKey ? maskAuthKeyForDisplay(nextApiKey) : current?.apiKey ?? '',
+        adminApiKey: nextAdminApiKey ? maskAuthKeyForDisplay(nextAdminApiKey) : current?.adminApiKey ?? '',
+      }))
+
+      if (nextApiKey) {
+        queryClient.setQueryData<ServerInfoQueryData | undefined>(['serverInfo'], (current) => ({
+          ...(current ?? {}),
+          masterApiKey: nextApiKey,
+        }))
+        queryClient.invalidateQueries({ queryKey: ['serverInfo'] })
+      }
+
       queryClient.invalidateQueries({ queryKey: ['auth-keys'] })
     },
   })

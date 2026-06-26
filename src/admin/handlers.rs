@@ -167,37 +167,56 @@ pub async fn set_auth_keys(
     State(state): State<AdminState>,
     Json(payload): Json<super::types::SetAuthKeysRequest>,
 ) -> impl IntoResponse {
-    // 验证输入
-    if let Some(ref key) = payload.api_key {
-        if key.trim().is_empty() {
-            let error = super::types::AdminErrorResponse::invalid_request("apiKey 不能为空");
-            return (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response();
-        }
-    }
-    if let Some(ref key) = payload.admin_api_key {
-        if key.trim().is_empty() {
-            let error = super::types::AdminErrorResponse::invalid_request("adminApiKey 不能为空");
-            return (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response();
-        }
-    }
+    let new_api_key = payload.api_key.as_ref().map(|key| key.trim().to_string());
+    let new_admin_api_key = payload
+        .admin_api_key
+        .as_ref()
+        .map(|key| key.trim().to_string());
 
-    // 更新运行时值
-    if let Some(ref new_api_key) = payload.api_key {
-        if let Some(ref master_key) = state.master_api_key {
-            *master_key.write() = new_api_key.clone();
+    // 验证输入
+    if let Some(ref key) = new_api_key {
+        if key.is_empty() {
+            let error = super::types::AdminErrorResponse::invalid_request("apiKey 不能为空");
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!(error)),
+            )
+                .into_response();
         }
     }
-    if let Some(ref new_admin_key) = payload.admin_api_key {
-        *state.admin_api_key.write() = new_admin_key.clone();
+    if let Some(ref key) = new_admin_api_key {
+        if key.is_empty() {
+            let error = super::types::AdminErrorResponse::invalid_request("adminApiKey 不能为空");
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!(error)),
+            )
+                .into_response();
+        }
     }
 
     // 持久化到 config.json
     if let Some(ref config_path) = state.config_path {
-        if let Err(e) = persist_auth_keys(config_path, &payload.api_key, &payload.admin_api_key) {
+        if let Err(e) = persist_auth_keys(config_path, &new_api_key, &new_admin_api_key) {
             tracing::error!("持久化认证密钥失败: {}", e);
-            let error = super::types::AdminErrorResponse::internal_error("持久化失败，但运行时已生效");
-            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!(error))).into_response();
+            let error =
+                super::types::AdminErrorResponse::internal_error("持久化失败，认证密钥未更新");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!(error)),
+            )
+                .into_response();
         }
+    }
+
+    // 更新运行时值
+    if let Some(ref new_api_key) = new_api_key {
+        if let Some(ref master_key) = state.master_api_key {
+            *master_key.write() = new_api_key.clone();
+        }
+    }
+    if let Some(ref new_admin_key) = new_admin_api_key {
+        *state.admin_api_key.write() = new_admin_key.clone();
     }
 
     Json(SuccessResponse::new("认证密钥已更新")).into_response()
@@ -254,4 +273,66 @@ fn persist_auth_keys(
     let output = serde_json::to_string_pretty(&json)?;
     std::fs::write(config_path, output)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::persist_auth_keys;
+    use serde_json::Value;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_config_path(test_name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kiro-rs-{test_name}-{}-{nanos}.json",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn persist_auth_keys_updates_only_provided_keys() {
+        let path = temp_config_path("auth-keys");
+        fs::write(
+            &path,
+            r#"{"host":"127.0.0.1","apiKey":"old-api","adminApiKey":"old-admin"}"#,
+        )
+        .unwrap();
+
+        persist_auth_keys(&path, &Some("new-api".to_string()), &None).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let json: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["apiKey"], "new-api");
+        assert_eq!(json["adminApiKey"], "old-admin");
+        assert_eq!(json["host"], "127.0.0.1");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn persist_auth_keys_can_update_both_auth_keys() {
+        let path = temp_config_path("auth-keys-both");
+        fs::write(&path, r#"{"apiKey":"old-api","adminApiKey":"old-admin"}"#).unwrap();
+
+        persist_auth_keys(
+            &path,
+            &Some("new-api".to_string()),
+            &Some("new-admin".to_string()),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let json: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["apiKey"], "new-api");
+        assert_eq!(json["adminApiKey"], "new-admin");
+
+        let _ = fs::remove_file(path);
+    }
 }

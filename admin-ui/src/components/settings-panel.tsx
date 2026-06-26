@@ -123,7 +123,7 @@ export function SettingsPanel() {
                     onClick={() => {
                       setAuthKeysMut({ adminApiKey: adminApiKeyDraft.trim() }, {
                         onSuccess: () => {
-                          toast.success('Admin API Key 已更新，请使用新密钥重新登录')
+                          toast.success('Admin API Key 已更新')
                           setEditingAdminApiKey(false)
                           setAdminApiKeyDraft('')
                         },
@@ -144,7 +144,7 @@ export function SettingsPanel() {
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              修改后立即生效，旧密钥将失效。修改 Admin API Key 后需要用新密钥重新登录。
+              修改后立即生效，旧密钥将失效。当前浏览器会自动切换到新的 Admin API Key。
             </p>
           </CardContent>
         </Card>
