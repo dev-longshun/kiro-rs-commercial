@@ -17,6 +17,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useServerInfo, useAllUsage, useResetKeyUsage, useRpm } from '@/hooks/use-credentials'
 import { deleteApiKey as deleteApiKeyApi } from '@/api/credentials'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { extractErrorMessage } from '@/lib/utils'
 import type { ApiKeyItem, UsageSummary } from '@/types/api'
 
@@ -125,18 +126,22 @@ export function ApiKeysPanel() {
   }
 
   const copyToClipboard = async (text: string, target: 'url' | 'master' | number) => {
-    await navigator.clipboard.writeText(text)
-    if (target === 'url') {
-      setCopiedUrl(true)
-      setTimeout(() => setCopiedUrl(false), 2000)
-    } else if (target === 'master') {
-      setCopiedMaster(true)
-      setTimeout(() => setCopiedMaster(false), 2000)
-    } else {
-      setCopiedId(target)
-      setTimeout(() => setCopiedId(null), 2000)
+    try {
+      await copyTextToClipboard(text)
+      if (target === 'url') {
+        setCopiedUrl(true)
+        setTimeout(() => setCopiedUrl(false), 2000)
+      } else if (target === 'master') {
+        setCopiedMaster(true)
+        setTimeout(() => setCopiedMaster(false), 2000)
+      } else {
+        setCopiedId(target)
+        setTimeout(() => setCopiedId(null), 2000)
+      }
+      toast.success('已复制到剪贴板')
+    } catch (error) {
+      toast.error(extractErrorMessage(error))
     }
-    toast.success('已复制到剪贴板')
   }
 
   const handleCreate = () => {
