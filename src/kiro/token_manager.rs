@@ -116,6 +116,16 @@ pub(crate) fn is_token_expiring_soon(credentials: &KiroCredentials) -> bool {
     is_token_expiring_within(credentials, 10).unwrap_or(false)
 }
 
+fn can_trust_imported_access_token(credentials: &KiroCredentials) -> bool {
+    credentials.is_external_idp()
+        && credentials
+            .access_token
+            .as_deref()
+            .is_some_and(|token| token.trim().len() > 100)
+        && !is_token_expired(credentials)
+        && !is_token_expiring_soon(credentials)
+}
+
 fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
@@ -467,6 +477,7 @@ async fn refresh_idc_token(
 
 /// getUsageLimits API 所需的 x-amz-user-agent header 前缀
 const USAGE_LIMITS_AMZ_USER_AGENT_PREFIX: &str = "aws-sdk-js/1.0.0";
+const LIST_AVAILABLE_PROFILES_TARGET: &str = "AmazonCodeWhispererService.ListAvailableProfiles";
 
 const DEFAULT_KIRO_PROFILE_REGIONS: &[&str] = &["us-east-1", "eu-central-1"];
 
@@ -530,12 +541,9 @@ fn profile_region_candidates(credentials: &KiroCredentials, config: &Config) -> 
 
 fn list_available_profiles_endpoint(region: &str) -> (String, String) {
     let region = region.trim();
-    let host = if region == "us-east-1" || region.is_empty() {
-        "codewhisperer.us-east-1.amazonaws.com".to_string()
-    } else {
-        format!("q.{}.amazonaws.com", region)
-    };
-    (format!("https://{}/ListAvailableProfiles", host), host)
+    let region = if region.is_empty() { "us-east-1" } else { region };
+    let host = format!("q.{}.amazonaws.com", region);
+    (format!("https://{}/", host), host)
 }
 
 fn is_transient_profile_fetch_error(err: &anyhow::Error) -> bool {
@@ -573,13 +581,16 @@ async fn list_available_profiles_in_region(
     let client = build_client(proxy, 60, config.tls_backend)?;
     let mut request = client
         .post(&url)
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json")
+        .header("Accept", "application/x-amz-json-1.0")
+        .header("Content-Type", "application/x-amz-json-1.0")
+        .header("x-amz-target", LIST_AVAILABLE_PROFILES_TARGET)
         .header("x-amz-user-agent", &amz_user_agent)
         .header("User-Agent", &user_agent)
         .header("host", &host)
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
         .header("amz-sdk-request", "attempt=1; max=1")
+        .header("x-amzn-kiro-agent-mode", "vibe")
+        .header("x-amzn-codewhisperer-optout", "true")
         .header("Authorization", format!("Bearer {}", token))
         .header("Connection", "close")
         .json(&serde_json::json!({ "maxResults": 10 }));
@@ -1920,10 +1931,14 @@ impl MultiTokenManager {
             anyhow::bail!("凭据已存在（refreshToken 重复）");
         }
 
-        // 3. 尝试刷新 Token 验证凭据有效性
+        // 3. 尝试刷新 Token 验证凭据有效性；external_idp KAM 导入可信任未过期 accessToken
         let effective_proxy = new_cred.effective_proxy(self.proxy.as_ref());
-        let mut validated_cred =
-            refresh_token(&new_cred, &self.config, effective_proxy.as_ref()).await?;
+        let mut validated_cred = if can_trust_imported_access_token(&new_cred) {
+            tracing::info!("External IdP 凭据导入使用现有 accessToken，跳过即时刷新");
+            new_cred.clone()
+        } else {
+            refresh_token(&new_cred, &self.config, effective_proxy.as_ref()).await?
+        };
 
         // 4. 分配新 ID
         let new_id = {

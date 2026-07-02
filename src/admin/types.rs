@@ -75,6 +75,9 @@ pub struct SetPriorityRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddCredentialRequest {
+    /// 访问令牌（可选；external_idp KAM 导入时可直接信任未过期 accessToken）
+    pub access_token: Option<String>,
+
     /// 刷新令牌（必填）
     pub refresh_token: String,
 
@@ -96,6 +99,12 @@ pub struct AddCredentialRequest {
 
     /// External IdP OAuth2 scopes（可选）
     pub scopes: Option<String>,
+
+    /// Profile ARN（可选，KAM/备份导入时保留）
+    pub profile_arn: Option<String>,
+
+    /// Token 过期时间（RFC3339 字符串；前端会把 KAM 毫秒时间戳转换为该格式）
+    pub expires_at: Option<String>,
 
     /// 优先级（可选，默认 0）
     #[serde(default)]

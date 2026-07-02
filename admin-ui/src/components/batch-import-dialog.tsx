@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useCredentials, useAddCredential, useDeleteCredential } from '@/hooks/use-credentials'
 import { getCredentialBalance, setCredentialDisabled } from '@/api/credentials'
+import { extractMicrosoftIssuerUrl, normalizeExpiresAt, resolveExternalIdpMetadata } from '@/lib/external-idp'
 import { extractErrorMessage } from '@/lib/utils'
 
 interface BatchImportDialogProps {
@@ -19,6 +20,7 @@ interface BatchImportDialogProps {
 }
 
 interface CredentialInput {
+  accessToken?: string
   refreshToken: string
   clientId?: string
   clientSecret?: string
@@ -28,9 +30,15 @@ interface CredentialInput {
   issuer_url?: string
   scopes?: string
   scope?: string
+  profileArn?: string
+  profile_arn?: string
+  expiresAt?: string | number
+  expires_at?: string | number
   authMethod?: string
   provider?: string
   idp?: string
+  userId?: string
+  email?: string
   region?: string
   authRegion?: string
   apiRegion?: string
@@ -76,6 +84,17 @@ function textIncludesAny(value: string | undefined, keywords: string[]): boolean
   if (!value) return false
   const lower = value.toLowerCase()
   return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
+}
+
+function isExternalIdpBalanceSoftError(authMethod: string, error: unknown): boolean {
+  if (authMethod !== 'external_idp') return false
+  const message = extractErrorMessage(error).toLowerCase()
+  return (
+    message.includes('403') ||
+    message.includes('not authorized') ||
+    message.includes('profilearn') ||
+    message.includes('accessdenied')
+  )
 }
 
 export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps) {
@@ -197,38 +216,56 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           // 添加凭据
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
-          const tokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
-          const issuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
-          const scopes = firstNonEmptyString(cred.scopes, cred.scope)
+          const explicitTokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
+          const explicitIssuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
+          const inferredIssuerUrl = extractMicrosoftIssuerUrl(explicitIssuerUrl, cred.userId)
+          const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
           const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || cred.idp
           const isExternalIdp =
             textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
-            Boolean(tokenEndpoint) ||
+            Boolean(explicitTokenEndpoint || inferredIssuerUrl) ||
             textIncludesAny(provider, ['external', 'microsoft', 'entra', 'azure'])
           const authMethod = isExternalIdp ? 'external_idp' : clientId && clientSecret ? 'idc' : 'social'
+          const externalIdpMetadata = authMethod === 'external_idp'
+            ? resolveExternalIdpMetadata({
+              clientId,
+              tokenEndpoint: explicitTokenEndpoint,
+              issuerUrl: explicitIssuerUrl,
+              scopes: explicitScopes,
+              userId: cred.userId,
+            })
+            : {}
 
-          if (authMethod === 'external_idp' && (!clientId || !tokenEndpoint)) {
+          if (authMethod === 'external_idp' && (!clientId || !externalIdpMetadata.tokenEndpoint)) {
             throw new Error('external_idp 模式需要同时提供 clientId 和 tokenEndpoint')
           }
 
           // idc 模式下必须同时提供 clientId 和 clientSecret；external_idp 是 public client，不需要 clientSecret
-          if (authMethod === 'social' && (clientId || clientSecret || tokenEndpoint)) {
+          if (authMethod === 'social' && (clientId || clientSecret || explicitTokenEndpoint)) {
             throw new Error('idc 模式需要同时提供 clientId 和 clientSecret')
           }
 
           const addedCred = await addCredential({
+            accessToken: authMethod === 'external_idp' ? cred.accessToken?.trim() || undefined : undefined,
             refreshToken: token,
             authMethod,
             authRegion: cred.authRegion?.trim() || cred.region?.trim() || undefined,
             apiRegion: cred.apiRegion?.trim() || undefined,
             clientId,
             clientSecret: authMethod === 'idc' ? clientSecret : undefined,
-            tokenEndpoint: authMethod === 'external_idp' ? tokenEndpoint : undefined,
-            issuerUrl: authMethod === 'external_idp' ? issuerUrl : undefined,
-            scopes: authMethod === 'external_idp' ? scopes : undefined,
+            tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,
+            issuerUrl: authMethod === 'external_idp' ? externalIdpMetadata.issuerUrl : undefined,
+            scopes: authMethod === 'external_idp' ? externalIdpMetadata.scopes : undefined,
+            profileArn: authMethod === 'external_idp'
+              ? firstNonEmptyString(cred.profileArn, cred.profile_arn)
+              : undefined,
+            expiresAt: authMethod === 'external_idp'
+              ? normalizeExpiresAt(firstNonEmptyString(cred.expiresAt, cred.expires_at) ?? cred.expiresAt ?? cred.expires_at)
+              : undefined,
             priority: cred.priority || 0,
             machineId: cred.machineId?.trim() || undefined,
+            email: cred.email?.trim() || undefined,
           })
 
           addedCredId = addedCred.credentialId
@@ -237,7 +274,31 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           await new Promise(resolve => setTimeout(resolve, 1000))
 
           // 验活
-          const balance = await getCredentialBalance(addedCred.credentialId)
+          let balance
+          try {
+            balance = await getCredentialBalance(addedCred.credentialId)
+          } catch (balanceError) {
+            if (!isExternalIdpBalanceSoftError(authMethod, balanceError)) {
+              throw balanceError
+            }
+
+            successCount++
+            if (tokenHash) existingTokenHashes.add(tokenHash)
+            setCurrentProcessing(addedCred.email ? `导入成功: ${addedCred.email}` : `导入成功: 凭据 ${i + 1}`)
+            setResults(prev => {
+              const newResults = [...prev]
+              newResults[i] = {
+                ...newResults[i],
+                status: 'verified',
+                usage: '已导入，余额稍后同步',
+                email: addedCred.email || undefined,
+                credentialId: addedCred.credentialId
+              }
+              return newResults
+            })
+            setProgress({ current: i + 1, total: credentials.length })
+            continue
+          }
 
           // 验活成功
           successCount++

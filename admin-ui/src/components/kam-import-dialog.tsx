@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useCredentials, useAddCredential, useDeleteCredential } from '@/hooks/use-credentials'
 import { getCredentialBalance, setCredentialDisabled } from '@/api/credentials'
+import { extractMicrosoftIssuerUrl, normalizeExpiresAt, resolveExternalIdpMetadata } from '@/lib/external-idp'
 import { extractErrorMessage } from '@/lib/utils'
 
 interface KamImportDialogProps {
@@ -24,6 +25,7 @@ interface KamAccount {
   userId?: string | null
   nickname?: string
   credentials: {
+    accessToken?: string
     refreshToken: string
     clientId?: string
     clientSecret?: string
@@ -33,12 +35,18 @@ interface KamAccount {
     issuer_url?: string
     scopes?: string
     scope?: string
+    profileArn?: string
+    profile_arn?: string
+    expiresAt?: string | number
+    expires_at?: string | number
     region?: string
     authMethod?: string
     startUrl?: string
     provider?: string
   }
   idp?: string
+  profileArn?: string
+  profile_arn?: string
   machineId?: string
   status?: string
 }
@@ -83,6 +91,17 @@ function textIncludesAny(value: string | undefined, keywords: string[]): boolean
   return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
 }
 
+function isExternalIdpBalanceSoftError(authMethod: string, error: unknown): boolean {
+  if (authMethod !== 'external_idp') return false
+  const message = extractErrorMessage(error).toLowerCase()
+  return (
+    message.includes('403') ||
+    message.includes('not authorized') ||
+    message.includes('profilearn') ||
+    message.includes('accessdenied')
+  )
+}
+
 // 校验元素是否为有效的 KAM 账号结构
 function isValidKamAccount(item: unknown): item is KamAccount {
   if (typeof item !== 'object' || item === null) return false
@@ -102,6 +121,7 @@ function normalizeToKamAccount(item: unknown): unknown {
   if (typeof obj.refreshToken === 'string' && obj.refreshToken.trim().length > 0) {
     const {
       refreshToken,
+      accessToken,
       clientId,
       clientSecret,
       tokenEndpoint,
@@ -110,6 +130,10 @@ function normalizeToKamAccount(item: unknown): unknown {
       issuer_url,
       scopes,
       scope,
+      profileArn,
+      profile_arn,
+      expiresAt,
+      expires_at,
       region,
       authMethod,
       startUrl,
@@ -120,6 +144,7 @@ function normalizeToKamAccount(item: unknown): unknown {
       ...rest,
       credentials: {
         refreshToken,
+        accessToken,
         clientId,
         clientSecret,
         tokenEndpoint,
@@ -128,6 +153,10 @@ function normalizeToKamAccount(item: unknown): unknown {
         issuer_url,
         scopes,
         scope,
+        profileArn,
+        profile_arn,
+        expiresAt,
+        expires_at,
         region,
         authMethod,
         startUrl,
@@ -300,43 +329,85 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         try {
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
-          const tokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
-          const issuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
-          const scopes = firstNonEmptyString(cred.scopes, cred.scope)
+          const explicitTokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
+          const explicitIssuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
+          const inferredIssuerUrl = extractMicrosoftIssuerUrl(explicitIssuerUrl, account.userId)
+          const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
           const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || account.idp
           const isExternalIdp =
             textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
-            Boolean(tokenEndpoint) ||
+            Boolean(explicitTokenEndpoint || inferredIssuerUrl) ||
             textIncludesAny(provider, ['external', 'microsoft', 'entra', 'azure'])
           const authMethod = isExternalIdp ? 'external_idp' : clientId && clientSecret ? 'idc' : 'social'
+          const externalIdpMetadata = authMethod === 'external_idp'
+            ? resolveExternalIdpMetadata({
+              clientId,
+              tokenEndpoint: explicitTokenEndpoint,
+              issuerUrl: explicitIssuerUrl,
+              scopes: explicitScopes,
+              userId: account.userId,
+            })
+            : {}
 
-          if (authMethod === 'external_idp' && (!clientId || !tokenEndpoint)) {
+          if (authMethod === 'external_idp' && (!clientId || !externalIdpMetadata.tokenEndpoint)) {
             throw new Error('external_idp 模式需要同时提供 clientId 和 tokenEndpoint')
           }
 
           // idc 模式下必须同时提供 clientId 和 clientSecret；external_idp 是 public client，不需要 clientSecret
-          if (authMethod === 'social' && (clientId || clientSecret || tokenEndpoint)) {
+          if (authMethod === 'social' && (clientId || clientSecret || explicitTokenEndpoint)) {
             throw new Error('idc 模式需要同时提供 clientId 和 clientSecret')
           }
 
           const addedCred = await addCredential({
+            accessToken: authMethod === 'external_idp' ? cred.accessToken?.trim() || undefined : undefined,
             refreshToken: token,
             authMethod,
             authRegion: cred.region?.trim() || undefined,
             clientId,
             clientSecret: authMethod === 'idc' ? clientSecret : undefined,
-            tokenEndpoint: authMethod === 'external_idp' ? tokenEndpoint : undefined,
-            issuerUrl: authMethod === 'external_idp' ? issuerUrl : undefined,
-            scopes: authMethod === 'external_idp' ? scopes : undefined,
+            tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,
+            issuerUrl: authMethod === 'external_idp' ? externalIdpMetadata.issuerUrl : undefined,
+            scopes: authMethod === 'external_idp' ? externalIdpMetadata.scopes : undefined,
+            profileArn: authMethod === 'external_idp'
+              ? firstNonEmptyString(cred.profileArn, cred.profile_arn, account.profileArn, account.profile_arn)
+              : undefined,
+            expiresAt: authMethod === 'external_idp'
+              ? normalizeExpiresAt(firstNonEmptyString(cred.expiresAt, cred.expires_at) ?? cred.expiresAt ?? cred.expires_at)
+              : undefined,
             machineId: account.machineId?.trim() || undefined,
+            email: firstNonEmptyString(account.email, account.nickname),
           })
 
           addedCredId = addedCred.credentialId
 
           await new Promise(resolve => setTimeout(resolve, 1000))
 
-          const balance = await getCredentialBalance(addedCred.credentialId)
+          let balance
+          try {
+            balance = await getCredentialBalance(addedCred.credentialId)
+          } catch (balanceError) {
+            if (!isExternalIdpBalanceSoftError(authMethod, balanceError)) {
+              throw balanceError
+            }
+
+            successCount++
+            if (tokenHash) existingTokenHashes.add(tokenHash)
+            setCurrentProcessing(`导入成功: ${addedCred.email || account.email || `账号 ${i + 1}`}`)
+            setResults(prev => {
+              const next = [...prev]
+              next[i] = {
+                ...next[i],
+                status: 'verified',
+                usage: '已导入，余额稍后同步',
+                email: addedCred.email || account.email,
+                credentialId: addedCred.credentialId,
+              }
+              return next
+            })
+            setProgress({ current: i + 1, total: validAccounts.length })
+            continue
+          }
 
           successCount++
           if (tokenHash) existingTokenHashes.add(tokenHash)
