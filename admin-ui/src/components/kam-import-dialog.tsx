@@ -54,11 +54,18 @@ interface VerificationResult {
   rollbackError?: string
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const encoded = new TextEncoder().encode(value)
-  const digest = await crypto.subtle.digest('SHA-256', encoded)
-  const bytes = new Uint8Array(digest)
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+async function sha256Hex(value: string): Promise<string | null> {
+  try {
+    const subtle = globalThis.crypto?.subtle
+    if (!subtle) return null
+
+    const encoded = new TextEncoder().encode(value)
+    const digest = await subtle.digest('SHA-256', encoded)
+    const bytes = new Uint8Array(digest)
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return null
+  }
 }
 
 function firstNonEmptyString(...values: Array<unknown>): string | undefined {
@@ -269,7 +276,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         })
 
         // 检查重复
-        if (existingTokenHashes.has(tokenHash)) {
+        if (tokenHash && existingTokenHashes.has(tokenHash)) {
           duplicateCount++
           const existingCred = existingCredentials?.credentials.find(c => c.refreshTokenHash === tokenHash)
           setResults(prev => {
@@ -332,7 +339,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
           const balance = await getCredentialBalance(addedCred.credentialId)
 
           successCount++
-          existingTokenHashes.add(tokenHash)
+          if (tokenHash) existingTokenHashes.add(tokenHash)
           setCurrentProcessing(`验活成功: ${addedCred.email || account.email || `账号 ${i + 1}`}`)
           setResults(prev => {
             const next = [...prev]
