@@ -267,16 +267,16 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
   const getStatusIcon = (status: VerificationResult['status']) => {
     switch (status) {
       case 'pending':
-        return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+        return <div className="w-5 h-5 rounded-full border-2 border-border" />
       case 'checking':
       case 'verifying':
-        return <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+        return <Loader2 className="w-5 h-5 animate-spin text-nb-blue" />
       case 'verified':
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />
+        return <CheckCircle2 className="w-5 h-5 text-nb-green" />
       case 'duplicate':
-        return <AlertCircle className="w-5 h-5 text-yellow-500" />
+        return <AlertCircle className="w-5 h-5 text-nb-yellow" />
       case 'failed':
-        return <XCircle className="w-5 h-5 text-red-500" />
+        return <XCircle className="w-5 h-5 text-nb-red" />
     }
   }
 
@@ -325,7 +325,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
               value={jsonInput}
               onChange={(e) => setJsonInput(e.target.value)}
               disabled={importing}
-              className="flex min-h-[200px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+              className="flex min-h-[200px] w-full border-[2.5px] border-border bg-background px-3 py-2 text-sm rounded-sm placeholder:text-foreground/40 focus-visible:outline-none focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 font-mono"
             />
             <p className="text-xs text-muted-foreground">
               💡 导入时自动验活，失败的凭据会被排除
@@ -340,9 +340,9 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
                   <span>{importing ? '验活进度' : '验活完成'}</span>
                   <span>{progress.current} / {progress.total}</span>
                 </div>
-                <div className="w-full bg-secondary rounded-full h-2">
+                <div className="w-full bg-muted border border-border rounded-sm h-2">
                   <div
-                    className="bg-primary h-2 rounded-full transition-all"
+                    className="bg-primary h-2 rounded-sm transition-all"
                     style={{ width: `${(progress.current / progress.total) * 100}%` }}
                   />
                 </div>
@@ -355,19 +355,19 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
 
               {/* 统计 */}
               <div className="flex gap-4 text-sm">
-                <span className="text-green-600 dark:text-green-400">
+                <span className="text-nb-green">
                   ✓ 成功: {results.filter(r => r.status === 'verified').length}
                 </span>
-                <span className="text-yellow-600 dark:text-yellow-400">
+                <span className="text-nb-yellow">
                   ⚠ 重复: {results.filter(r => r.status === 'duplicate').length}
                 </span>
-                <span className="text-red-600 dark:text-red-400">
+                <span className="text-nb-red">
                   ✗ 失败: {results.filter(r => r.status === 'failed').length}
                 </span>
               </div>
 
               {/* 结果列表 */}
-              <div className="border rounded-md divide-y max-h-[300px] overflow-y-auto">
+              <div className="border-[2.5px] border-border rounded-sm divide-y divide-border max-h-[300px] overflow-y-auto">
                 {results.map((result) => (
                   <div key={result.index} className="p-3">
                     <div className="flex items-start gap-3">
@@ -387,12 +387,12 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
                           </div>
                         )}
                         {result.error && (
-                          <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+                          <div className="text-xs text-nb-red mt-1">
                             {result.error}
                           </div>
                         )}
                         {result.rollbackError && (
-                          <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+                          <div className="text-xs text-nb-red mt-1">
                             回滚失败: {result.rollbackError}
                           </div>
                         )}

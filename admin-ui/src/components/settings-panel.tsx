@@ -36,7 +36,7 @@ export function SettingsPanel() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">设置</h2>
+      <h2 className="text-xl font-bold tracking-tight">设置</h2>
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* 认证密钥 */}

@@ -102,7 +102,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
             {/* Refresh Token */}
             <div className="space-y-2">
               <label htmlFor="refreshToken" className="text-sm font-medium">
-                Refresh Token <span className="text-red-500">*</span>
+                Refresh Token <span className="text-nb-red">*</span>
               </label>
               <Input
                 id="refreshToken"
@@ -164,7 +164,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
               <>
                 <div className="space-y-2">
                   <label htmlFor="clientId" className="text-sm font-medium">
-                    Client ID <span className="text-red-500">*</span>
+                    Client ID <span className="text-nb-red">*</span>
                   </label>
                   <Input
                     id="clientId"
@@ -176,7 +176,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="clientSecret" className="text-sm font-medium">
-                    Client Secret <span className="text-red-500">*</span>
+                    Client Secret <span className="text-nb-red">*</span>
                   </label>
                   <Input
                     id="clientSecret"

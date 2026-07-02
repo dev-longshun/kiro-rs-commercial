@@ -3,7 +3,7 @@ import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, Rot
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { CredentialCard } from '@/components/credential-card'
@@ -475,7 +475,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-6 text-center">
-            <div className="text-red-500 mb-4">加载失败</div>
+            <div className="text-nb-red mb-4">加载失败</div>
             <p className="text-muted-foreground mb-4">{(error as Error).message}</p>
             <div className="space-x-2">
               <Button onClick={() => refetch()}>重试</Button>
@@ -490,37 +490,39 @@ export function Dashboard({ onLogout }: DashboardProps) {
   return (
     <div className="min-h-screen bg-background">
       {/* 顶部导航 */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 items-center justify-between px-3 sm:px-4 md:px-8">
+      <header className="sticky top-0 z-50 w-full border-b-[2.5px] border-border bg-background">
+        <div className="container-nb flex h-14 items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-2">
-              <Server className="h-5 w-5" />
-              <span className="font-semibold hidden sm:inline">Kiro Admin</span>
+              <div className="h-8 w-8 flex items-center justify-center border-[2.5px] border-border bg-primary text-primary-foreground rounded-sm shadow-nb-sm">
+                <Server className="h-4 w-4" />
+              </div>
+              <span className="font-bold tracking-tight hidden sm:inline">Kiro Admin</span>
             </div>
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+            <div className="flex items-center border-[2.5px] border-border rounded-sm overflow-hidden">
               <Button
-                variant={activeTab === 'credentials' ? 'default' : 'ghost'}
+                variant={activeTab === 'credentials' ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setActiveTab('credentials')}
-                className="h-7 px-2 sm:px-3 text-xs"
+                className="h-7 px-2 sm:px-3 text-xs border-0 shadow-none rounded-none border-r-[2.5px] border-border"
               >
                 <Server className="h-3 w-3 sm:mr-1" />
                 <span className="hidden sm:inline">凭据管理</span>
               </Button>
               <Button
-                variant={activeTab === 'apikeys' ? 'default' : 'ghost'}
+                variant={activeTab === 'apikeys' ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setActiveTab('apikeys')}
-                className="h-7 px-2 sm:px-3 text-xs"
+                className="h-7 px-2 sm:px-3 text-xs border-0 shadow-none rounded-none border-r-[2.5px] border-border"
               >
                 <Key className="h-3 w-3 sm:mr-1" />
                 <span className="hidden sm:inline">API Keys</span>
               </Button>
               <Button
-                variant={activeTab === 'settings' ? 'default' : 'ghost'}
+                variant={activeTab === 'settings' ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setActiveTab('settings')}
-                className="h-7 px-2 sm:px-3 text-xs"
+                className="h-7 px-2 sm:px-3 text-xs border-0 shadow-none rounded-none"
               >
                 <Settings className="h-3 w-3 sm:mr-1" />
                 <span className="hidden sm:inline">设置</span>
@@ -542,7 +544,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       </header>
 
       {/* 主内容 */}
-      <main className="container mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6">
+      <main className="container-nb page-padding animate-fade-in-up">
         {activeTab === 'settings' ? (
           <SettingsPanel />
         ) : activeTab === 'apikeys' ? (
@@ -550,71 +552,47 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : (
         <>
         {/* 统计卡片 */}
-        <div className="grid gap-4 md:grid-cols-4 mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                凭据总数
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{data?.total || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                可用凭据
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{data?.available || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                全局积分
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-orange-600">
+        <div className="grid gap-4 mb-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <div className="nb-card animate-fade-in-up animate-delay-1">
+            <div className="nb-label text-foreground/60">凭据总数</div>
+            <div className="text-3xl font-bold tracking-tight mono">{data?.total || 0}</div>
+          </div>
+          <div className="nb-card animate-fade-in-up animate-delay-2">
+            <div className="nb-label text-foreground/60">可用凭据</div>
+            <div className="text-3xl font-bold tracking-tight mono text-nb-green">{data?.available || 0}</div>
+          </div>
+          <div className="nb-card animate-fade-in-up animate-delay-3">
+            <div className="nb-label text-foreground/60">全局积分</div>
+            <div className="text-3xl font-bold tracking-tight mono text-nb-orange">
                 {liveCreditsTotal !== null ? liveCreditsTotal.toFixed(1) : '-'}
               </div>
               {liveCreditsTotal !== null && (
                 <div className="mt-1 space-y-1">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between text-xs text-foreground/60">
                     <span>{liveCreditsQueried}/{data?.credentials.length || 0} 已查询</span>
                   </div>
                   {queryingInfo && (
-                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div className="h-1.5 w-full rounded-sm bg-muted overflow-hidden border border-border">
                       <div
-                        className="h-full rounded-full bg-orange-500 transition-all duration-300"
+                        className="h-full bg-nb-orange transition-all duration-300"
                         style={{ width: `${(data?.credentials.length || 0) > 0 ? (liveCreditsQueried / (data?.credentials.length || 1)) * 100 : 0}%` }}
                       />
                     </div>
                   )}
                 </div>
               )}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                全局 RPM
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-blue-600">{rpmData?.global ?? '-'}</div>
-            </CardContent>
-          </Card>
+          </div>
+          <div className="nb-card animate-fade-in-up animate-delay-4">
+            <div className="nb-label text-foreground/60">全局 RPM</div>
+            <div className="text-3xl font-bold tracking-tight mono text-nb-blue">{rpmData?.global ?? '-'}</div>
+          </div>
         </div>
 
         {/* 凭据列表 */}
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xl font-semibold">凭据管理</h2>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-xl font-bold tracking-tight">凭据管理</h2>
               {selectedIds.size > 0 && (
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">已选择 {selectedIds.size} 个</Badge>

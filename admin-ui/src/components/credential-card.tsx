@@ -136,14 +136,15 @@ export function CredentialCard({
     <>
       <Card className={credential.isCurrent ? 'ring-2 ring-primary' : ''}>
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               <Checkbox
                 checked={selected}
                 onCheckedChange={onToggleSelect}
               />
-              <CardTitle className="text-lg flex items-center gap-2">
-                {credential.email || `凭据 #${credential.id}`}
+              <CardTitle className="text-lg flex items-center gap-2 min-w-0">
+                <span className="text-muted-foreground font-mono text-sm shrink-0">#{credential.id}</span>
+                <span className="truncate">{credential.email || '未命名凭据'}</span>
                 {credential.isCurrent && (
                   <Badge variant="success">当前</Badge>
                 )}
@@ -152,7 +153,7 @@ export function CredentialCard({
                 )}
               </CardTitle>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <span className="text-sm text-muted-foreground">启用</span>
               <Switch
                 checked={!credential.disabled}
@@ -209,7 +210,7 @@ export function CredentialCard({
             </div>
             <div>
               <span className="text-muted-foreground">失败次数：</span>
-              <span className={credential.failureCount > 0 ? 'text-red-500 font-medium' : ''}>
+              <span className={credential.failureCount > 0 ? 'text-nb-red font-medium' : ''}>
                 {credential.failureCount}
               </span>
             </div>
@@ -227,25 +228,33 @@ export function CredentialCard({
             </div>
             <div>
               <span className="text-muted-foreground">RPM：</span>
-              <span className="font-medium text-blue-600">{rpm}</span>
+              <span className="font-medium text-nb-blue">{rpm}</span>
             </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>
               <span className="font-medium">{formatLastUsed(credential.lastUsedAt)}</span>
             </div>
             <div className="col-span-2">
-              <span className="text-muted-foreground">剩余用量：</span>
+              <span className="text-muted-foreground">已用量：</span>
               {loadingBalance ? (
                 <span className="text-sm ml-1">
                   <Loader2 className="inline w-3 h-3 animate-spin" /> 加载中...
                 </span>
               ) : balance ? (
-                <span className="font-medium ml-1">
-                  {balance.remaining.toFixed(2)} / {balance.usageLimit.toFixed(2)}
-                  <span className="text-xs text-muted-foreground ml-1">
-                    ({(100 - balance.usagePercentage).toFixed(1)}% 剩余)
-                  </span>
-                </span>
+                <div className="mt-1.5">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-medium">{balance.currentUsage.toFixed(1)} / {balance.usageLimit.toFixed(1)}</span>
+                    <span className={`font-bold ${balance.usagePercentage > 100 ? 'text-purple-500' : balance.usagePercentage > 80 ? 'text-nb-red' : balance.usagePercentage > 60 ? 'text-nb-yellow' : 'text-nb-green'}`}>
+                      {balance.usagePercentage.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden border-[2px] border-border bg-background rounded-sm">
+                    <div
+                      className={`h-full transition-all ${balance.usagePercentage > 100 ? 'bg-purple-500' : balance.usagePercentage > 80 ? 'bg-nb-red' : balance.usagePercentage > 60 ? 'bg-nb-yellow' : 'bg-nb-green'}`}
+                      style={{ width: `${Math.min(balance.usagePercentage, 100)}%` }}
+                    />
+                  </div>
+                </div>
               ) : (
                 <span className="text-sm text-muted-foreground ml-1">未知</span>
               )}

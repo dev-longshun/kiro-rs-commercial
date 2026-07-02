@@ -308,8 +308,10 @@ export function ApiKeysPanel() {
               variant="ghost"
               size="sm"
               onClick={() => copyToClipboard(window.location.origin, 'url')}
+              title="复制 API Base URL"
+              aria-label="复制 API Base URL"
             >
-              {copiedUrl ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              {copiedUrl ? <Check className="h-4 w-4 text-nb-green" /> : <Copy className="h-4 w-4" />}
             </Button>
           </div>
           <div className="flex items-center justify-between">
@@ -322,8 +324,10 @@ export function ApiKeysPanel() {
               size="sm"
               onClick={() => serverInfo?.masterApiKey && copyToClipboard(serverInfo.masterApiKey, 'master')}
               disabled={!serverInfo?.masterApiKey}
+              title="复制主 API Key"
+              aria-label="复制主 API Key"
             >
-              {copiedMaster ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              {copiedMaster ? <Check className="h-4 w-4 text-nb-green" /> : <Copy className="h-4 w-4" />}
             </Button>
           </div>
         </CardContent>
@@ -337,57 +341,37 @@ export function ApiKeysPanel() {
         const disabled = all.filter((k) => getKeyStatus(k) === 'disabled').length
         const expired = all.filter((k) => getKeyStatus(k) === 'expired').length
         return (
-          <div className="grid gap-4 grid-cols-2 md:grid-cols-5">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">总数</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{all.length}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">启用中</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-green-600">{active}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">待激活</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-500">{pending}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">已禁用</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-red-600">{disabled}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">已过期</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-orange-500">{expired}</div>
-              </CardContent>
-            </Card>
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
+            <div className="nb-card-sm nb-card animate-fade-in-up animate-delay-1">
+              <div className="nb-label text-foreground/60">总数</div>
+              <div className="text-3xl font-bold tracking-tight mono">{all.length}</div>
+            </div>
+            <div className="nb-card-sm nb-card animate-fade-in-up animate-delay-2">
+              <div className="nb-label text-foreground/60">启用中</div>
+              <div className="text-3xl font-bold tracking-tight mono text-nb-green">{active}</div>
+            </div>
+            <div className="nb-card-sm nb-card animate-fade-in-up animate-delay-3">
+              <div className="nb-label text-foreground/60">待激活</div>
+              <div className="text-3xl font-bold tracking-tight mono text-foreground/50">{pending}</div>
+            </div>
+            <div className="nb-card-sm nb-card animate-fade-in-up animate-delay-4">
+              <div className="nb-label text-foreground/60">已禁用</div>
+              <div className="text-3xl font-bold tracking-tight mono text-nb-red">{disabled}</div>
+            </div>
+            <div className="nb-card-sm nb-card animate-fade-in-up">
+              <div className="nb-label text-foreground/60">已过期</div>
+              <div className="text-3xl font-bold tracking-tight mono text-nb-orange">{expired}</div>
+            </div>
           </div>
         )
       })()}
 
       {/* API Key 列表 */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">API Key 管理</h2>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <ArrowDownWideNarrow className="h-4 w-4 text-muted-foreground" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-xl font-bold tracking-tight whitespace-nowrap">API Key 管理</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            <ArrowDownWideNarrow className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Button size="sm" variant={sortBy === 'newest' ? 'default' : 'outline'} onClick={() => setSortBy('newest')}>最新</Button>
             <Button size="sm" variant={sortBy === 'cost-desc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-desc')}>费用↓</Button>
             <Button size="sm" variant={sortBy === 'cost-asc' ? 'default' : 'outline'} onClick={() => setSortBy('cost-asc')}>费用↑</Button>
@@ -486,13 +470,13 @@ export function ApiKeysPanel() {
                             <BarChart3 className="h-3 w-3" />
                             {usage?.totalRequests ?? 0} 次请求
                           </span>
-                          <span className="text-blue-600 dark:text-blue-400 font-medium">
+                          <span className="text-nb-blue font-medium">
                             RPM {rpmData?.byApiKey?.[String(apiKey.id)] ?? 0}
                           </span>
                           <span className="text-muted-foreground">
                             入 {formatTokens(usage?.totalInputTokens ?? 0)} / 出 {formatTokens(usage?.totalOutputTokens ?? 0)}
                           </span>
-                          <span className="font-medium text-orange-600 dark:text-orange-400">
+                          <span className="font-medium text-nb-orange">
                             {formatCost(usage?.totalCost ?? 0)}
                           </span>
                           {usage && usage.totalRequests > 0 && (
@@ -516,7 +500,7 @@ export function ApiKeysPanel() {
                     </div>
                     <div className="flex items-center gap-1 sm:ml-2 self-end sm:self-auto">
                       <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`订单编号: ${apiKey.name}\nBase URL: ${window.location.origin}\nAPI Key: ${apiKey.key}`, apiKey.id)} title="复制 URL 和 Key">
-                        {copiedId === apiKey.id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                        {copiedId === apiKey.id ? <Check className="h-4 w-4 text-nb-green" /> : <Copy className="h-4 w-4" />}
                       </Button>
                       <Switch checked={apiKey.enabled} onCheckedChange={() => handleToggleEnabled(apiKey)} />
                       <Button variant="ghost" size="sm" onClick={() => openEdit(apiKey)} title="编辑">

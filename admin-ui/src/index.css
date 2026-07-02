@@ -1,60 +1,169 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --nb-cream: #fffef5;
+    --nb-ink: #1a1423;
+    --nb-orange: #ff6b35;
+    --nb-blue: #004e98;
+    --nb-green: #2d9b4e;
+    --nb-yellow: #ffd23f;
+    --nb-red: #e63946;
+    --nb-shadow-color: #1a1423;
+
+    --background: 55 100% 98%;
+    --foreground: 264 27% 12%;
+    --card: 55 100% 98%;
+    --card-foreground: 264 27% 12%;
+    --popover: 55 100% 98%;
+    --popover-foreground: 264 27% 12%;
+    --primary: 16 100% 60%;
+    --primary-foreground: 55 100% 98%;
+    --secondary: 55 100% 98%;
+    --secondary-foreground: 264 27% 12%;
+    --muted: 55 50% 94%;
+    --muted-foreground: 264 15% 40%;
+    --accent: 48 100% 62%;
+    --accent-foreground: 264 27% 12%;
+    --destructive: 355 77% 56%;
+    --destructive-foreground: 55 100% 98%;
+    --border: 264 27% 12%;
+    --input: 264 27% 12%;
+    --ring: 16 100% 60%;
+    --radius: 2px;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --nb-cream: #fffef5;
+    --nb-ink: #fffef5;
+    --nb-orange: #ff7e4a;
+    --nb-blue: #4a8fd1;
+    --nb-green: #3fb862;
+    --nb-yellow: #ffd23f;
+    --nb-red: #f05562;
+    --nb-shadow-color: #2d2d2d;
+
+    --background: 0 0% 0%;
+    --foreground: 55 100% 98%;
+    --card: 0 0% 4%;
+    --card-foreground: 55 100% 98%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 55 100% 98%;
+    --primary: 18 100% 64%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 4%;
+    --secondary-foreground: 55 100% 98%;
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 48 100% 62%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 354 85% 64%;
+    --destructive-foreground: 55 100% 98%;
+    --border: 55 100% 98%;
+    --input: 55 100% 98%;
+    --ring: 18 100% 64%;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Sora", "Noto Sans SC", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4 {
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
+@layer components {
+  .nb-card {
+    @apply border-[2.5px] bg-background p-6 rounded-sm transition-all duration-150;
+    border-color: hsl(var(--border));
+    box-shadow: 4px 4px 0 var(--nb-shadow-color);
   }
-  body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+  .nb-card:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--nb-shadow-color);
+  }
+  .nb-card-sm {
+    @apply p-4;
+    box-shadow: 2px 2px 0 var(--nb-shadow-color);
+  }
+
+  .nb-label {
+    @apply block text-xs font-semibold uppercase tracking-wider mb-2;
+  }
+
+  .nb-divider {
+    @apply h-[2px] my-6;
+    background: hsl(var(--border));
+  }
+
+  .nb-table {
+    @apply w-full border-collapse text-[0.8125rem];
+  }
+  .nb-table th {
+    @apply text-left text-[0.6875rem] font-bold uppercase tracking-wider px-3 py-2;
+    background: hsl(var(--foreground));
+    color: hsl(var(--background));
+    border-bottom: 2px solid hsl(var(--border));
+  }
+  .nb-table td {
+    @apply px-3 py-3 align-middle;
+    border-bottom: 1px solid hsl(var(--border) / 0.15);
+  }
+  .nb-table tr:hover td {
+    background: hsl(var(--primary) / 0.05);
+  }
+
+  .container-nb {
+    @apply max-w-[1200px] mx-auto px-6;
+  }
+  .page-padding {
+    @apply py-8 px-6;
+  }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in-up {
+    animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .animate-delay-1 { animation-delay: 0.1s; }
+  .animate-delay-2 { animation-delay: 0.2s; }
+  .animate-delay-3 { animation-delay: 0.3s; }
+  .animate-delay-4 { animation-delay: 0.4s; }
+
+  .mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
   }
 }
+
+@layer utilities {
+  .number-input-clean {
+    -moz-appearance: textfield;
+  }
+  .number-input-clean::-webkit-outer-spin-button,
+  .number-input-clean::-webkit-inner-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+  }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: hsl(var(--background)); }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); }

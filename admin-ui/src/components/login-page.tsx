@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { KeyRound } from 'lucide-react'
 import { storage } from '@/lib/storage'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 
@@ -30,33 +29,31 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <KeyRound className="h-6 w-6 text-primary" />
+      <div className="nb-card w-full max-w-md animate-fade-in-up">
+        <div className="text-center mb-6">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center border-[2.5px] border-border bg-primary text-primary-foreground rounded-sm shadow-nb-sm">
+            <KeyRound className="h-7 w-7" />
           </div>
-          <CardTitle className="text-2xl">Kiro Admin</CardTitle>
-          <CardDescription>
+          <h1 className="text-2xl font-bold tracking-tight">Kiro Admin</h1>
+          <p className="text-sm text-foreground/60 mt-2">
             请输入 Admin API Key 以访问管理面板
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Input
-                type="password"
-                placeholder="Admin API Key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="text-center"
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={!apiKey.trim()}>
-              登录
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          </p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Input
+              type="password"
+              placeholder="Admin API Key"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="text-center"
+            />
+          </div>
+          <Button type="submit" className="w-full" disabled={!apiKey.trim()}>
+            登录
+          </Button>
+        </form>
+      </div>
     </div>
   )
 }

@@ -330,18 +330,18 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
   const getStatusIcon = (status: VerificationResult['status']) => {
     switch (status) {
       case 'pending':
-        return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+        return <div className="w-5 h-5 rounded-full border-2 border-border" />
       case 'checking':
       case 'verifying':
-        return <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+        return <Loader2 className="w-5 h-5 animate-spin text-nb-blue" />
       case 'verified':
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />
+        return <CheckCircle2 className="w-5 h-5 text-nb-green" />
       case 'duplicate':
-        return <AlertCircle className="w-5 h-5 text-yellow-500" />
+        return <AlertCircle className="w-5 h-5 text-nb-yellow" />
       case 'skipped':
         return <AlertCircle className="w-5 h-5 text-gray-400" />
       case 'failed':
-        return <XCircle className="w-5 h-5 text-red-500" />
+        return <XCircle className="w-5 h-5 text-nb-red" />
     }
   }
 
@@ -415,7 +415,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
 
           {/* 解析预览 */}
           {parseError && (
-            <div className="text-sm text-red-600 dark:text-red-400">解析失败: {parseError}</div>
+            <div className="text-sm text-nb-red">解析失败: {parseError}</div>
           )}
           {previewAccounts.length > 0 && !importing && results.length === 0 && (
             <div className="space-y-2">
@@ -445,9 +445,9 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
                   <span>{importing ? '导入进度' : '导入完成'}</span>
                   <span>{progress.current} / {progress.total}</span>
                 </div>
-                <div className="w-full bg-secondary rounded-full h-2">
+                <div className="w-full bg-muted border border-border rounded-sm h-2">
                   <div
-                    className="bg-primary h-2 rounded-full transition-all"
+                    className="bg-primary h-2 rounded-sm transition-all"
                     style={{ width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%` }}
                   />
                 </div>
@@ -457,13 +457,13 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
               </div>
 
               <div className="flex gap-4 text-sm">
-                <span className="text-green-600 dark:text-green-400">
+                <span className="text-nb-green">
                   ✓ 成功: {results.filter(r => r.status === 'verified').length}
                 </span>
-                <span className="text-yellow-600 dark:text-yellow-400">
+                <span className="text-nb-yellow">
                   ⚠ 重复: {results.filter(r => r.status === 'duplicate').length}
                 </span>
-                <span className="text-red-600 dark:text-red-400">
+                <span className="text-nb-red">
                   ✗ 失败: {results.filter(r => r.status === 'failed').length}
                 </span>
                 <span className="text-gray-500">
@@ -471,7 +471,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
                 </span>
               </div>
 
-              <div className="border rounded-md divide-y max-h-[300px] overflow-y-auto">
+              <div className="border-[2.5px] border-border rounded-sm divide-y divide-border max-h-[300px] overflow-y-auto">
                 {results.map((result) => (
                   <div key={result.index} className="p-3">
                     <div className="flex items-start gap-3">
@@ -489,10 +489,10 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
                           <div className="text-xs text-muted-foreground mt-1">用量: {result.usage}</div>
                         )}
                         {result.error && (
-                          <div className="text-xs text-red-600 dark:text-red-400 mt-1">{result.error}</div>
+                          <div className="text-xs text-nb-red mt-1">{result.error}</div>
                         )}
                         {result.rollbackError && (
-                          <div className="text-xs text-red-600 dark:text-red-400 mt-1">回滚失败: {result.rollbackError}</div>
+                          <div className="text-xs text-nb-red mt-1">回滚失败: {result.rollbackError}</div>
                         )}
                       </div>
                     </div>

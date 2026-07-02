@@ -50,9 +50,9 @@ export function BatchVerifyDialog({
                 <span>验活进度</span>
                 <span>{progress.current} / {progress.total}</span>
               </div>
-              <div className="w-full bg-secondary rounded-full h-2">
+              <div className="w-full bg-muted border border-border rounded-sm h-2">
                 <div
-                  className="bg-primary h-2 rounded-full transition-all"
+                  className="bg-primary h-2 rounded-sm transition-all"
                   style={{ width: `${(progress.current / progress.total) * 100}%` }}
                 />
               </div>
@@ -71,18 +71,18 @@ export function BatchVerifyDialog({
 
           {/* 结果列表 */}
           {results.size > 0 && (
-            <div className="max-h-[400px] overflow-y-auto border rounded-md p-2 space-y-1">
+            <div className="max-h-[400px] overflow-y-auto border-[2.5px] border-border rounded-sm p-2 space-y-1">
               {resultsArray.map((result) => (
                 <div
                   key={result.id}
                   className={`text-sm p-2 rounded ${
                     result.status === 'success'
-                      ? 'bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300'
+                      ? 'bg-nb-green/10 text-nb-green'
                       : result.status === 'failed'
-                      ? 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
+                      ? 'bg-nb-red/10 text-nb-red'
                       : result.status === 'verifying'
-                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
-                      : 'bg-gray-50 text-gray-700 dark:bg-gray-950 dark:text-gray-300'
+                      ? 'bg-nb-blue/10 text-nb-blue'
+                      : 'bg-muted text-foreground'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
