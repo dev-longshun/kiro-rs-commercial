@@ -22,6 +22,15 @@ interface CredentialInput {
   refreshToken: string
   clientId?: string
   clientSecret?: string
+  tokenEndpoint?: string
+  token_endpoint?: string
+  issuerUrl?: string
+  issuer_url?: string
+  scopes?: string
+  scope?: string
+  authMethod?: string
+  provider?: string
+  idp?: string
   region?: string
   authRegion?: string
   apiRegion?: string
@@ -45,6 +54,21 @@ async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', encoded)
   const bytes = new Uint8Array(digest)
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function firstNonEmptyString(...values: Array<unknown>): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim()
+    }
+  }
+  return undefined
+}
+
+function textIncludesAny(value: string | undefined, keywords: string[]): boolean {
+  if (!value) return false
+  const lower = value.toLowerCase()
+  return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
 }
 
 export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps) {
@@ -166,10 +190,23 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           // 添加凭据
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
-          const authMethod = clientId && clientSecret ? 'idc' : 'social'
+          const tokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
+          const issuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
+          const scopes = firstNonEmptyString(cred.scopes, cred.scope)
+          const rawAuthMethod = cred.authMethod?.trim()
+          const provider = cred.provider || cred.idp
+          const isExternalIdp =
+            textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
+            Boolean(tokenEndpoint) ||
+            textIncludesAny(provider, ['external', 'microsoft', 'entra', 'azure'])
+          const authMethod = isExternalIdp ? 'external_idp' : clientId && clientSecret ? 'idc' : 'social'
 
-          // idc 模式下必须同时提供 clientId 和 clientSecret
-          if (authMethod === 'social' && (clientId || clientSecret)) {
+          if (authMethod === 'external_idp' && (!clientId || !tokenEndpoint)) {
+            throw new Error('external_idp 模式需要同时提供 clientId 和 tokenEndpoint')
+          }
+
+          // idc 模式下必须同时提供 clientId 和 clientSecret；external_idp 是 public client，不需要 clientSecret
+          if (authMethod === 'social' && (clientId || clientSecret || tokenEndpoint)) {
             throw new Error('idc 模式需要同时提供 clientId 和 clientSecret')
           }
 
@@ -179,7 +216,10 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
             authRegion: cred.authRegion?.trim() || cred.region?.trim() || undefined,
             apiRegion: cred.apiRegion?.trim() || undefined,
             clientId,
-            clientSecret,
+            clientSecret: authMethod === 'idc' ? clientSecret : undefined,
+            tokenEndpoint: authMethod === 'external_idp' ? tokenEndpoint : undefined,
+            issuerUrl: authMethod === 'external_idp' ? issuerUrl : undefined,
+            scopes: authMethod === 'external_idp' ? scopes : undefined,
             priority: cred.priority || 0,
             machineId: cred.machineId?.trim() || undefined,
           })

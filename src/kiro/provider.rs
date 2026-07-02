@@ -59,8 +59,8 @@ impl KiroProvider {
     pub fn with_proxy(token_manager: Arc<MultiTokenManager>, proxy: Option<ProxyConfig>) -> Self {
         let tls_backend = token_manager.config().tls_backend;
         // 预热：构建全局代理对应的 Client
-        let initial_client = build_client(proxy.as_ref(), 180, tls_backend)
-            .expect("创建 HTTP 客户端失败");
+        let initial_client =
+            build_client(proxy.as_ref(), 180, tls_backend).expect("创建 HTTP 客户端失败");
         let mut cache = HashMap::new();
         cache.insert(proxy.clone(), initial_client);
 
@@ -115,14 +115,17 @@ impl KiroProvider {
 
     /// 获取 API 基础域名（使用 config 级 api_region）
     pub fn base_domain(&self) -> String {
-        format!("q.{}.amazonaws.com", self.token_manager.config().effective_api_region())
+        format!(
+            "q.{}.amazonaws.com",
+            self.token_manager.config().effective_api_region()
+        )
     }
 
     /// 获取凭据级 API 基础 URL
     fn base_url_for(&self, credentials: &KiroCredentials) -> String {
         format!(
             "https://q.{}.amazonaws.com/generateAssistantResponse",
-            credentials.effective_api_region(self.token_manager.config())
+            credentials.effective_data_region(self.token_manager.config())
         )
     }
 
@@ -130,7 +133,7 @@ impl KiroProvider {
     fn mcp_url_for(&self, credentials: &KiroCredentials) -> String {
         format!(
             "https://q.{}.amazonaws.com/mcp",
-            credentials.effective_api_region(self.token_manager.config())
+            credentials.effective_data_region(self.token_manager.config())
         )
     }
 
@@ -138,7 +141,7 @@ impl KiroProvider {
     fn base_domain_for(&self, credentials: &KiroCredentials) -> String {
         format!(
             "q.{}.amazonaws.com",
-            credentials.effective_api_region(self.token_manager.config())
+            credentials.effective_data_region(self.token_manager.config())
         )
     }
 
@@ -209,7 +212,10 @@ impl KiroProvider {
             reqwest::header::USER_AGENT,
             HeaderValue::from_str(&user_agent).unwrap(),
         );
-        headers.insert(HOST, HeaderValue::from_str(&self.base_domain_for(&ctx.credentials)).unwrap());
+        headers.insert(
+            HOST,
+            HeaderValue::from_str(&self.base_domain_for(&ctx.credentials)).unwrap(),
+        );
         headers.insert(
             "amz-sdk-invocation-id",
             HeaderValue::from_str(&Uuid::new_v4().to_string()).unwrap(),
@@ -222,6 +228,9 @@ impl KiroProvider {
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", ctx.token)).unwrap(),
         );
+        if ctx.credentials.is_external_idp() {
+            headers.insert("TokenType", HeaderValue::from_static("EXTERNAL_IDP"));
+        }
         Ok(headers)
     }
 
@@ -252,7 +261,10 @@ impl KiroProvider {
             HeaderValue::from_str(&x_amz_user_agent).unwrap(),
         );
         headers.insert("user-agent", HeaderValue::from_str(&user_agent).unwrap());
-        headers.insert("host", HeaderValue::from_str(&self.base_domain_for(&ctx.credentials)).unwrap());
+        headers.insert(
+            "host",
+            HeaderValue::from_str(&self.base_domain_for(&ctx.credentials)).unwrap(),
+        );
         headers.insert(
             "amz-sdk-invocation-id",
             HeaderValue::from_str(&Uuid::new_v4().to_string()).unwrap(),
@@ -265,6 +277,9 @@ impl KiroProvider {
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {}", ctx.token)).unwrap(),
         );
+        if ctx.credentials.is_external_idp() {
+            headers.insert("TokenType", HeaderValue::from_static("EXTERNAL_IDP"));
+        }
         Ok(headers)
     }
 
@@ -775,6 +790,23 @@ mod tests {
         );
         // Connection: close 已移除，启用 keep-alive 连接复用
         assert!(headers.get("connection").is_none());
+    }
+
+    #[test]
+    fn test_build_headers_external_idp_token_type() {
+        let mut credentials = KiroCredentials::default();
+        credentials.refresh_token = Some("a".repeat(150));
+        credentials.auth_method = Some("external_idp".to_string());
+
+        let provider = create_test_provider(Config::default(), credentials.clone());
+        let ctx = CallContext {
+            id: 1,
+            credentials,
+            token: "test_token".to_string(),
+        };
+        let headers = provider.build_headers(&ctx).unwrap();
+
+        assert_eq!(headers.get("TokenType").unwrap(), "EXTERNAL_IDP");
     }
 
     #[test]

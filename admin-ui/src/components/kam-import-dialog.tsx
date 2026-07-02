@@ -27,10 +27,18 @@ interface KamAccount {
     refreshToken: string
     clientId?: string
     clientSecret?: string
+    tokenEndpoint?: string
+    token_endpoint?: string
+    issuerUrl?: string
+    issuer_url?: string
+    scopes?: string
+    scope?: string
     region?: string
     authMethod?: string
     startUrl?: string
+    provider?: string
   }
+  idp?: string
   machineId?: string
   status?: string
 }
@@ -53,6 +61,21 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+function firstNonEmptyString(...values: Array<unknown>): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim()
+    }
+  }
+  return undefined
+}
+
+function textIncludesAny(value: string | undefined, keywords: string[]): boolean {
+  if (!value) return false
+  const lower = value.toLowerCase()
+  return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
+}
+
 // 校验元素是否为有效的 KAM 账号结构
 function isValidKamAccount(item: unknown): item is KamAccount {
   if (typeof item !== 'object' || item === null) return false
@@ -70,10 +93,39 @@ function normalizeToKamAccount(item: unknown): unknown {
   if (typeof obj.credentials === 'object' && obj.credentials !== null) return item
   // 顶层有 refreshToken，自动包装
   if (typeof obj.refreshToken === 'string' && obj.refreshToken.trim().length > 0) {
-    const { refreshToken, clientId, clientSecret, region, authMethod, startUrl, ...rest } = obj
+    const {
+      refreshToken,
+      clientId,
+      clientSecret,
+      tokenEndpoint,
+      token_endpoint,
+      issuerUrl,
+      issuer_url,
+      scopes,
+      scope,
+      region,
+      authMethod,
+      startUrl,
+      provider,
+      ...rest
+    } = obj
     return {
       ...rest,
-      credentials: { refreshToken, clientId, clientSecret, region, authMethod, startUrl },
+      credentials: {
+        refreshToken,
+        clientId,
+        clientSecret,
+        tokenEndpoint,
+        token_endpoint,
+        issuerUrl,
+        issuer_url,
+        scopes,
+        scope,
+        region,
+        authMethod,
+        startUrl,
+        provider,
+      },
     }
   }
   return item
@@ -241,10 +293,23 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         try {
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
-          const authMethod = clientId && clientSecret ? 'idc' : 'social'
+          const tokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
+          const issuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
+          const scopes = firstNonEmptyString(cred.scopes, cred.scope)
+          const rawAuthMethod = cred.authMethod?.trim()
+          const provider = cred.provider || account.idp
+          const isExternalIdp =
+            textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
+            Boolean(tokenEndpoint) ||
+            textIncludesAny(provider, ['external', 'microsoft', 'entra', 'azure'])
+          const authMethod = isExternalIdp ? 'external_idp' : clientId && clientSecret ? 'idc' : 'social'
 
-          // idc 模式下必须同时提供 clientId 和 clientSecret
-          if (authMethod === 'social' && (clientId || clientSecret)) {
+          if (authMethod === 'external_idp' && (!clientId || !tokenEndpoint)) {
+            throw new Error('external_idp 模式需要同时提供 clientId 和 tokenEndpoint')
+          }
+
+          // idc 模式下必须同时提供 clientId 和 clientSecret；external_idp 是 public client，不需要 clientSecret
+          if (authMethod === 'social' && (clientId || clientSecret || tokenEndpoint)) {
             throw new Error('idc 模式需要同时提供 clientId 和 clientSecret')
           }
 
@@ -253,7 +318,10 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
             authMethod,
             authRegion: cred.region?.trim() || undefined,
             clientId,
-            clientSecret,
+            clientSecret: authMethod === 'idc' ? clientSecret : undefined,
+            tokenEndpoint: authMethod === 'external_idp' ? tokenEndpoint : undefined,
+            issuerUrl: authMethod === 'external_idp' ? issuerUrl : undefined,
+            scopes: authMethod === 'external_idp' ? scopes : undefined,
             machineId: account.machineId?.trim() || undefined,
           })
 

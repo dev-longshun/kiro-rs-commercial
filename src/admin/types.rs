@@ -88,6 +88,15 @@ pub struct AddCredentialRequest {
     /// OIDC Client Secret（IdC 认证需要）
     pub client_secret: Option<String>,
 
+    /// External IdP OAuth2 token endpoint（external_idp 认证需要）
+    pub token_endpoint: Option<String>,
+
+    /// External IdP OIDC issuer URL（可选，仅记录）
+    pub issuer_url: Option<String>,
+
+    /// External IdP OAuth2 scopes（可选）
+    pub scopes: Option<String>,
+
     /// 优先级（可选，默认 0）
     #[serde(default)]
     pub priority: u32,
@@ -151,6 +160,15 @@ pub struct UpdateCredentialRequest {
 
     /// OIDC Client Secret（可选）
     pub client_secret: Option<String>,
+
+    /// External IdP OAuth2 token endpoint（可选）
+    pub token_endpoint: Option<String>,
+
+    /// External IdP OIDC issuer URL（可选）
+    pub issuer_url: Option<String>,
+
+    /// External IdP OAuth2 scopes（可选）
+    pub scopes: Option<String>,
 
     /// 凭据级 Auth Region（用于 Token 刷新）
     pub auth_region: Option<String>,
@@ -282,9 +300,7 @@ where
 
 /// 区分 JSON 中"字段缺失"与"字段为 null"（f64 版本）
 /// 缺失 → None（不更新），null → Some(None)（不限额），有值 → Some(Some(limit))
-fn deserialize_optional_f64<'de, D>(
-    deserializer: D,
-) -> Result<Option<Option<f64>>, D::Error>
+fn deserialize_optional_f64<'de, D>(deserializer: D) -> Result<Option<Option<f64>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

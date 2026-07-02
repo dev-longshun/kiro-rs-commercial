@@ -44,3 +44,33 @@ pub struct IdcRefreshResponse {
     #[serde(default)]
     pub profile_arn: Option<String>,
 }
+
+/// External IdP OAuth2 token response (snake_case)
+#[derive(Debug, Deserialize)]
+pub struct ExternalIdpRefreshResponse {
+    #[serde(default)]
+    pub access_token: Option<String>,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub error_description: Option<String>,
+}
+
+/// ListAvailableProfiles response
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAvailableProfilesResponse {
+    #[serde(default)]
+    pub profiles: Vec<AvailableProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableProfile {
+    #[serde(default)]
+    pub arn: String,
+}

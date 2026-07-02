@@ -202,6 +202,9 @@ impl AdminService {
             auth_method: Some(req.auth_method),
             client_id: req.client_id,
             client_secret: req.client_secret,
+            token_endpoint: req.token_endpoint,
+            issuer_url: req.issuer_url,
+            scopes: req.scopes,
             priority: req.priority,
             region: req.region,
             auth_region: req.auth_region,
@@ -434,7 +437,8 @@ impl AdminService {
         let msg = e.to_string();
         if msg.contains("不存在") {
             AdminServiceError::NotFound { id }
-        } else if msg.contains("只能删除已禁用的凭据") || msg.contains("请先禁用凭据") {
+        } else if msg.contains("只能删除已禁用的凭据") || msg.contains("请先禁用凭据")
+        {
             AdminServiceError::InvalidCredential(msg)
         } else {
             AdminServiceError::InternalError(msg)
