@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Settings } from 'lucide-react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Settings, FileText } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -14,6 +14,7 @@ import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
 import { SettingsPanel } from '@/components/settings-panel'
+import { ErrorLogsPanel } from '@/components/error-logs-panel'
 import { useCredentials, useDeleteCredential, useResetFailure, useRpm } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
@@ -24,7 +25,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'settings'>('credentials')
+  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'logs' | 'settings'>('credentials')
   const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null)
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -519,6 +520,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <span className="hidden sm:inline">API Keys</span>
               </Button>
               <Button
+                variant={activeTab === 'logs' ? 'default' : 'secondary'}
+                size="sm"
+                onClick={() => setActiveTab('logs')}
+                className="h-7 px-2 sm:px-3 text-xs border-0 shadow-none rounded-none border-r-[2.5px] border-border"
+              >
+                <FileText className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">错误日志</span>
+              </Button>
+              <Button
                 variant={activeTab === 'settings' ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setActiveTab('settings')}
@@ -547,6 +557,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <main className="container-nb page-padding animate-fade-in-up">
         {activeTab === 'settings' ? (
           <SettingsPanel />
+        ) : activeTab === 'logs' ? (
+          <ErrorLogsPanel />
         ) : activeTab === 'apikeys' ? (
           <ApiKeysPanel />
         ) : (

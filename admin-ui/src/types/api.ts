@@ -49,6 +49,29 @@ export interface AdminErrorResponse {
   }
 }
 
+// 凭据事件
+export interface CredentialEvent {
+  timestamp: string
+  eventType: string
+  credentialId: number
+  statusCode?: number
+  bodySnippet?: string
+  url?: string
+  proxyId?: number
+  attempt?: number
+  maxRetries?: number
+  rpm?: number
+  reason?: string
+  requestHeaders?: Record<string, string>
+  proxyName?: string
+  proxyUrl?: string
+}
+
+export interface CredentialEventsResponse {
+  credentialId: number
+  events: CredentialEvent[]
+}
+
 // 请求类型
 export interface SetDisabledRequest {
   disabled: boolean

@@ -5,6 +5,9 @@ import {
   setCredentialPriority,
   resetCredentialFailure,
   getCredentialBalance,
+  getCredentialEvents,
+  getErrorEvents,
+  clearErrorEvents,
   addCredential,
   deleteCredential,
   updateCredential,
@@ -43,6 +46,36 @@ export function useCredentialBalance(id: number | null) {
     queryFn: () => getCredentialBalance(id!),
     enabled: id !== null,
     retry: false, // 余额查询失败时不重试（避免重复请求被封禁的账号）
+  })
+}
+
+export function useCredentialEvents(id: number | null) {
+  return useQuery({
+    queryKey: ['credential-events', id],
+    queryFn: () => getCredentialEvents(id!),
+    enabled: id !== null,
+    refetchInterval: 10000,
+  })
+}
+
+export function useErrorEvents() {
+  return useQuery({
+    queryKey: ['errorEvents'],
+    queryFn: () => getErrorEvents(500),
+    refetchInterval: 10000,
+  })
+}
+
+export function useClearErrorEvents() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: clearErrorEvents,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-events'] })
+      queryClient.invalidateQueries({ queryKey: ['credentialEvents'] })
+      queryClient.invalidateQueries({ queryKey: ['errorEvents'] })
+    },
   })
 }
 

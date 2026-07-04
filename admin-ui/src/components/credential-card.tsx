@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, Loader2, Pencil } from 'lucide-react'
+import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, Loader2, Pencil, ScrollText } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +23,7 @@ import {
   useDeleteCredential,
 } from '@/hooks/use-credentials'
 import { EditCredentialDialog } from './edit-credential-dialog'
+import { CredentialEventsDialog } from './credential-events-dialog'
 
 interface CredentialCardProps {
   credential: CredentialStatusItem
@@ -63,6 +64,7 @@ export function CredentialCard({
   const [priorityValue, setPriorityValue] = useState(String(credential.priority))
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [showEventsDialog, setShowEventsDialog] = useState(false)
 
   const setDisabled = useSetDisabled()
   const setPriority = useSetPriority()
@@ -330,6 +332,14 @@ export function CredentialCard({
             <Button
               size="sm"
               variant="outline"
+              onClick={() => setShowEventsDialog(true)}
+            >
+              <ScrollText className="h-4 w-4 mr-1" />
+              日志
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setShowEditDialog(true)}
             >
               <Pencil className="h-4 w-4 mr-1" />
@@ -382,6 +392,11 @@ export function CredentialCard({
         open={showEditDialog}
         onOpenChange={setShowEditDialog}
         credential={credential}
+      />
+      <CredentialEventsDialog
+        credentialId={credential.id}
+        open={showEventsDialog}
+        onOpenChange={setShowEventsDialog}
       />
     </>
   )

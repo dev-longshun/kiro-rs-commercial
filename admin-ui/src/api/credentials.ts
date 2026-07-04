@@ -14,6 +14,8 @@ import type {
   UpdateApiKeyRequest,
   UsageSummary,
   RpmSnapshot,
+  CredentialEventsResponse,
+  CredentialEvent,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -74,6 +76,26 @@ export async function resetCredentialFailure(
 // 获取凭据余额
 export async function getCredentialBalance(id: number): Promise<BalanceResponse> {
   const { data } = await api.get<BalanceResponse>(`/credentials/${id}/balance`)
+  return data
+}
+
+// 获取凭据事件日志
+export async function getCredentialEvents(id: number): Promise<CredentialEventsResponse> {
+  const { data } = await api.get<CredentialEventsResponse>(`/credentials/${id}/events`)
+  return data
+}
+
+// 获取全局错误日志
+export async function getErrorEvents(limit = 200): Promise<{ events: CredentialEvent[]; total: number }> {
+  const { data } = await api.get<{ events: CredentialEvent[]; total: number }>('/credentials/error-events', {
+    params: { limit },
+  })
+  return data
+}
+
+// 清理全局错误日志
+export async function clearErrorEvents(): Promise<{ success: boolean; removed: number }> {
+  const { data } = await api.delete<{ success: boolean; removed: number }>('/credentials/error-events')
   return data
 }
 

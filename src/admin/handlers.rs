@@ -2,18 +2,24 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
+use serde::Deserialize;
 
 use super::{
     middleware::AdminState,
     types::{
         AddCredentialRequest, CacheSimulationConfigResponse, SetCacheSimulationConfigRequest,
-        SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
-        SuccessResponse, UpdateCredentialRequest,
+        SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest, SuccessResponse,
+        UpdateCredentialRequest,
     },
 };
+
+#[derive(Deserialize)]
+pub struct ErrorEventsQuery {
+    pub limit: Option<usize>,
+}
 
 /// GET /api/admin/credentials
 /// 获取所有凭据状态
@@ -80,6 +86,77 @@ pub async fn get_credential_balance(
     match state.service.get_balance(id).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// GET /api/admin/credentials/{id}/events
+pub async fn get_credential_events(
+    State(state): State<AdminState>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    match &state.event_store {
+        Some(store) => Json(serde_json::json!({
+            "credentialId": id,
+            "events": store.get_events(id),
+        }))
+        .into_response(),
+        None => {
+            let error = super::types::AdminErrorResponse::not_found("事件日志未启用");
+            (axum::http::StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
+/// GET /api/admin/credentials/error-events
+/// 获取所有凭据的错误类型事件（按时间倒序）
+pub async fn get_error_events(
+    State(state): State<AdminState>,
+    Query(params): Query<ErrorEventsQuery>,
+) -> impl IntoResponse {
+    match &state.event_store {
+        Some(store) => {
+            let limit = params.limit.unwrap_or(200);
+            let all = store.get_all_recent(limit);
+            // 只返回错误类型的事件
+            let errors: Vec<_> = all
+                .into_iter()
+                .filter(|e| {
+                    matches!(
+                        e.event_type,
+                        crate::model::credential_event::CredentialEventType::ApiFailure
+                            | crate::model::credential_event::CredentialEventType::NetworkError
+                            | crate::model::credential_event::CredentialEventType::TokenRefreshFailure
+                            | crate::model::credential_event::CredentialEventType::RateLimited
+                            | crate::model::credential_event::CredentialEventType::QuotaExhausted
+                    )
+                })
+                .collect();
+            Json(serde_json::json!({
+                "events": errors,
+                "total": errors.len(),
+            }))
+            .into_response()
+        }
+        None => {
+            let error = super::types::AdminErrorResponse::not_found("事件日志未启用");
+            (axum::http::StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
+    }
+}
+
+/// DELETE /api/admin/credentials/error-events
+/// 清理所有凭据的错误类型事件
+pub async fn clear_error_events(State(state): State<AdminState>) -> impl IntoResponse {
+    match &state.event_store {
+        Some(store) => Json(serde_json::json!({
+            "success": true,
+            "removed": store.clear_error_events(),
+        }))
+        .into_response(),
+        None => {
+            let error = super::types::AdminErrorResponse::not_found("事件日志未启用");
+            (axum::http::StatusCode::NOT_FOUND, Json(error)).into_response()
+        }
     }
 }
 
@@ -223,9 +300,7 @@ pub async fn set_auth_keys(
 }
 
 /// GET /api/admin/config/cache-simulation
-pub async fn get_cache_simulation_config(
-    State(state): State<AdminState>,
-) -> impl IntoResponse {
+pub async fn get_cache_simulation_config(State(state): State<AdminState>) -> impl IntoResponse {
     let tm = state.service.token_manager();
     Json(CacheSimulationConfigResponse {
         enabled: tm.get_cache_simulation_enabled(),
@@ -240,7 +315,11 @@ pub async fn set_cache_simulation_config(
     Json(payload): Json<SetCacheSimulationConfigRequest>,
 ) -> impl IntoResponse {
     let tm = state.service.token_manager();
-    match tm.set_cache_simulation_config(payload.enabled, payload.read_ratio, payload.creation_ratio) {
+    match tm.set_cache_simulation_config(
+        payload.enabled,
+        payload.read_ratio,
+        payload.creation_ratio,
+    ) {
         Ok(()) => Json(CacheSimulationConfigResponse {
             enabled: payload.enabled,
             read_ratio: payload.read_ratio,
@@ -249,7 +328,11 @@ pub async fn set_cache_simulation_config(
         .into_response(),
         Err(e) => {
             let error = super::types::AdminErrorResponse::internal_error(&e.to_string());
-            (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!(error))).into_response()
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!(error)),
+            )
+                .into_response()
         }
     }
 }

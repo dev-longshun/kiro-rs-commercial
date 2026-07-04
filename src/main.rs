@@ -104,8 +104,23 @@ async fn main() {
     // 创建 RPM 追踪器
     let rpm_tracker = Arc::new(model::rpm::RpmTracker::new());
 
+    // 创建凭据事件日志存储
+    let event_store = Arc::new(model::credential_event::CredentialEventStore::new());
+    token_manager.set_event_store(event_store.clone());
+    {
+        let store = event_store.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                store.cleanup_expired_successes();
+            }
+        });
+    }
+
     let kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone())
-        .with_rpm_tracker(rpm_tracker.clone());
+        .with_rpm_tracker(rpm_tracker.clone())
+        .with_event_store(event_store.clone());
 
     // 初始化 count_tokens 配置
     token::init_config(token::CountTokensConfig {
@@ -174,6 +189,7 @@ async fn main() {
             let mut admin_state = admin::AdminState::new(admin_api_key_shared, admin_service)
                 .with_master_api_key(api_key_shared.clone())
                 .with_rpm_tracker(rpm_tracker.clone())
+                .with_event_store(event_store.clone())
                 .with_config_path(std::path::PathBuf::from(&config_path));
             if let Some(ref manager) = api_key_manager {
                 admin_state = admin_state.with_api_key_manager(manager.clone());

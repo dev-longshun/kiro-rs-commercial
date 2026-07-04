@@ -12,7 +12,10 @@ use tokio::sync::Mutex as TokioMutex;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::http_client::{ProxyConfig, build_client};
@@ -24,6 +27,7 @@ use crate::kiro::model::token_refresh::{
 };
 use crate::kiro::model::usage_limits::UsageLimitsResponse;
 use crate::model::config::Config;
+use crate::model::credential_event::{CredentialEvent, CredentialEventStore, CredentialEventType};
 
 /// Token 管理器
 ///
@@ -868,6 +872,8 @@ pub struct MultiTokenManager {
     cache_read_ratio: Mutex<f64>,
     /// 缓存写入比例
     cache_creation_ratio: Mutex<f64>,
+    /// 凭据事件日志存储
+    event_store: Mutex<Option<Arc<CredentialEventStore>>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -985,6 +991,7 @@ impl MultiTokenManager {
             cache_simulation_enabled: Mutex::new(cache_simulation_enabled),
             cache_read_ratio: Mutex::new(cache_read_ratio),
             cache_creation_ratio: Mutex::new(cache_creation_ratio),
+            event_store: Mutex::new(None),
         };
 
         // 如果有新分配的 ID 或新生成的 machineId，立即持久化到配置文件
@@ -1005,6 +1012,17 @@ impl MultiTokenManager {
     /// 获取配置的引用
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// 设置凭据事件日志存储
+    pub fn set_event_store(&self, store: Arc<CredentialEventStore>) {
+        *self.event_store.lock() = Some(store);
+    }
+
+    fn emit_event(&self, event: CredentialEvent) {
+        if let Some(ref store) = *self.event_store.lock() {
+            store.push(event);
+        }
     }
 
     /// 获取当前活动凭据的克隆
@@ -1309,7 +1327,24 @@ impl MultiTokenManager {
                 // 确实需要刷新
                 let effective_proxy = current_creds.effective_proxy(self.proxy.as_ref());
                 let new_creds =
-                    refresh_token(&current_creds, &self.config, effective_proxy.as_ref()).await?;
+                    match refresh_token(&current_creds, &self.config, effective_proxy.as_ref())
+                        .await
+                    {
+                        Ok(new_creds) => {
+                            self.emit_event(
+                                CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, id)
+                                    .with_reason("Token 自动刷新成功"),
+                            );
+                            new_creds
+                        }
+                        Err(e) => {
+                            self.emit_event(
+                                CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                                    .with_reason(format!("Token 自动刷新失败: {}", e)),
+                            );
+                            return Err(e);
+                        }
+                    };
 
                 if is_token_expired(&new_creds) {
                     anyhow::bail!("刷新后的 Token 仍然无效或已过期");
@@ -1553,6 +1588,7 @@ impl MultiTokenManager {
     /// # Arguments
     /// * `id` - 凭据 ID（来自 CallContext）
     pub fn report_failure(&self, id: u64) -> bool {
+        let mut auto_disabled = false;
         let result = {
             let mut entries = self.entries.lock();
             let mut current_id = self.current_id.lock();
@@ -1576,6 +1612,7 @@ impl MultiTokenManager {
             if failure_count >= MAX_FAILURES_PER_CREDENTIAL {
                 entry.disabled = true;
                 entry.disabled_reason = Some(DisabledReason::TooManyFailures);
+                auto_disabled = true;
                 tracing::error!("凭据 #{} 已连续失败 {} 次，已被禁用", id, failure_count);
 
                 // 切换到优先级最高的可用凭据
@@ -1597,6 +1634,14 @@ impl MultiTokenManager {
 
             entries.iter().any(|e| !e.disabled)
         };
+        if auto_disabled {
+            self.emit_event(
+                CredentialEvent::new(CredentialEventType::AutoDisabled, id).with_reason(format!(
+                    "连续失败 {} 次，自动禁用",
+                    MAX_FAILURES_PER_CREDENTIAL
+                )),
+            );
+        }
         self.save_stats_debounced();
         result
     }
@@ -1647,6 +1692,9 @@ impl MultiTokenManager {
                 false
             }
         };
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::AutoDisabled, id).with_reason("额度用尽"),
+        );
         self.save_stats_debounced();
         result
     }
@@ -1750,6 +1798,14 @@ impl MultiTokenManager {
         }
         // 持久化更改
         self.persist_credentials()?;
+        self.emit_event(CredentialEvent::new(
+            if disabled {
+                CredentialEventType::ManualDisabled
+            } else {
+                CredentialEventType::ManualEnabled
+            },
+            id,
+        ));
         Ok(())
     }
 
@@ -1787,6 +1843,10 @@ impl MultiTokenManager {
         }
         // 持久化更改
         self.persist_credentials()?;
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::ManualEnabled, id)
+                .with_reason("重置失败计数并重新启用"),
+        );
         Ok(())
     }
 
@@ -1818,7 +1878,24 @@ impl MultiTokenManager {
             if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
                 let effective_proxy = current_creds.effective_proxy(self.proxy.as_ref());
                 let new_creds =
-                    refresh_token(&current_creds, &self.config, effective_proxy.as_ref()).await?;
+                    match refresh_token(&current_creds, &self.config, effective_proxy.as_ref())
+                        .await
+                    {
+                        Ok(new_creds) => {
+                            self.emit_event(
+                                CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, id)
+                                    .with_reason("余额查询前 Token 刷新成功"),
+                            );
+                            new_creds
+                        }
+                        Err(e) => {
+                            self.emit_event(
+                                CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                                    .with_reason(format!("余额查询前 Token 刷新失败: {}", e)),
+                            );
+                            return Err(e);
+                        }
+                    };
                 {
                     let mut entries = self.entries.lock();
                     if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
@@ -2003,6 +2080,10 @@ impl MultiTokenManager {
         }
 
         tracing::info!("成功添加凭据 #{}", new_id);
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, new_id)
+                .with_reason("凭据添加验证成功"),
+        );
         Ok(new_id)
     }
 
@@ -2076,7 +2157,22 @@ impl MultiTokenManager {
 
             let effective_proxy = temp_cred.effective_proxy(self.proxy.as_ref());
             let validated =
-                refresh_token(&temp_cred, &self.config, effective_proxy.as_ref()).await?;
+                match refresh_token(&temp_cred, &self.config, effective_proxy.as_ref()).await {
+                    Ok(validated) => {
+                        self.emit_event(
+                            CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, id)
+                                .with_reason("凭据更新验证成功"),
+                        );
+                        validated
+                    }
+                    Err(e) => {
+                        self.emit_event(
+                            CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                                .with_reason(format!("凭据更新验证失败: {}", e)),
+                        );
+                        return Err(e);
+                    }
+                };
 
             // 更新凭据（保留验证后的 access_token 和 expires_at）
             let mut entries = self.entries.lock();

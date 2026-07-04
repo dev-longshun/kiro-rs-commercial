@@ -11,11 +11,11 @@ use super::{
         list_api_keys, reset_key_usage, update_api_key,
     },
     handlers::{
-        add_credential, delete_credential, get_all_credentials, get_auth_keys,
-        get_cache_simulation_config, get_credential_balance, get_load_balancing_mode,
-        reset_failure_count, set_auth_keys, set_cache_simulation_config,
-        set_credential_disabled, set_credential_priority, set_load_balancing_mode,
-        update_credential,
+        add_credential, clear_error_events, delete_credential, get_all_credentials, get_auth_keys,
+        get_cache_simulation_config, get_credential_balance, get_credential_events,
+        get_error_events, get_load_balancing_mode, reset_failure_count, set_auth_keys,
+        set_cache_simulation_config, set_credential_disabled, set_credential_priority,
+        set_load_balancing_mode, update_credential,
     },
     middleware::{AdminState, admin_auth_middleware},
 };
@@ -33,6 +33,11 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/credentials/{id}/priority", post(set_credential_priority))
         .route("/credentials/{id}/reset", post(reset_failure_count))
         .route("/credentials/{id}/balance", get(get_credential_balance))
+        .route("/credentials/{id}/events", get(get_credential_events))
+        .route(
+            "/credentials/error-events",
+            get(get_error_events).delete(clear_error_events),
+        )
         .route(
             "/config/load-balancing",
             get(get_load_balancing_mode).put(set_load_balancing_mode),

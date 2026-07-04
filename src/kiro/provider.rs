@@ -7,6 +7,7 @@
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HOST, HeaderMap, HeaderValue};
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -17,6 +18,7 @@ use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::{CallContext, MultiTokenManager};
 use crate::model::config::TlsBackend;
+use crate::model::credential_event::{CredentialEvent, CredentialEventStore, CredentialEventType};
 use crate::model::rpm::RpmTracker;
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
@@ -29,6 +31,22 @@ const MAX_TOTAL_RETRIES: usize = 9;
 
 /// 最大并发请求数（同时发往上游的请求上限）
 const MAX_CONCURRENT_REQUESTS: usize = 50;
+
+/// 请求使用的代理信息（用于事件日志）
+#[derive(Clone, Default)]
+struct ProxyInfo {
+    id: Option<u32>,
+    name: Option<String>,
+    url: Option<String>,
+}
+
+impl ProxyInfo {
+    fn to_event(&self, event: CredentialEvent) -> CredentialEvent {
+        event
+            .with_proxy(self.id)
+            .with_proxy_detail(self.name.clone(), self.url.clone())
+    }
+}
 
 /// Kiro API Provider
 ///
@@ -47,6 +65,8 @@ pub struct KiroProvider {
     concurrency_limit: Arc<Semaphore>,
     /// RPM 追踪器（可选，用于记录凭据维度的 RPM）
     rpm_tracker: Option<Arc<RpmTracker>>,
+    /// 凭据事件日志存储
+    event_store: Option<Arc<CredentialEventStore>>,
 }
 
 impl KiroProvider {
@@ -71,6 +91,7 @@ impl KiroProvider {
             tls_backend,
             concurrency_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
             rpm_tracker: None,
+            event_store: None,
         }
     }
 
@@ -80,16 +101,49 @@ impl KiroProvider {
         self
     }
 
+    /// 设置凭据事件日志存储
+    pub fn with_event_store(mut self, store: Arc<CredentialEventStore>) -> Self {
+        self.event_store = Some(store);
+        self
+    }
+
+    fn emit_event(&self, event: CredentialEvent) {
+        if let Some(ref store) = self.event_store {
+            store.push(event);
+        }
+    }
+
     /// 根据凭据的代理配置获取（或创建并缓存）对应的 reqwest::Client
-    fn client_for(&self, credentials: &KiroCredentials) -> anyhow::Result<Client> {
+    fn client_for(&self, credentials: &KiroCredentials) -> anyhow::Result<(Client, ProxyInfo)> {
         let effective = credentials.effective_proxy(self.global_proxy.as_ref());
+        let proxy_info = match credentials.proxy_url.as_deref() {
+            Some(url) if url.eq_ignore_ascii_case("direct") => ProxyInfo {
+                id: None,
+                name: Some("服务器直连(凭据设置)".to_string()),
+                url: None,
+            },
+            Some(url) => ProxyInfo {
+                id: None,
+                name: Some("凭据自带".to_string()),
+                url: Some(url.to_string()),
+            },
+            None => effective
+                .as_ref()
+                .map(|proxy| ProxyInfo {
+                    id: None,
+                    name: Some("全局代理".to_string()),
+                    url: Some(proxy.url.clone()),
+                })
+                .unwrap_or_default(),
+        };
+
         let mut cache = self.client_cache.lock();
         if let Some(client) = cache.get(&effective) {
-            return Ok(client.clone());
+            return Ok((client.clone(), proxy_info));
         }
         let client = build_client(effective.as_ref(), 180, self.tls_backend)?;
         cache.insert(effective, client.clone());
-        Ok(client)
+        Ok((client, proxy_info))
     }
 
     /// 获取 token_manager 的引用
@@ -356,24 +410,28 @@ impl KiroProvider {
                     continue;
                 }
             };
+            let headers_summary = Self::extract_headers_summary(&headers);
 
             // 发送请求
             let body = Self::inject_profile_arn(request_body, &ctx.credentials.profile_arn);
-            let response = match self
-                .client_for(&ctx.credentials)?
-                .post(&url)
-                .headers(headers)
-                .body(body)
-                .send()
-                .await
-            {
+            let (client, proxy_info) = self.client_for(&ctx.credentials)?;
+            let response = match client.post(&url).headers(headers).body(body).send().await {
                 Ok(resp) => resp,
                 Err(e) => {
+                    let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
                         "MCP 请求发送失败（尝试 {}/{}）: {}",
                         attempt + 1,
                         max_retries,
                         e
+                    );
+                    self.emit_event(
+                        proxy_info.to_event(
+                            CredentialEvent::new(CredentialEventType::NetworkError, ctx.id)
+                                .with_url(&url)
+                                .with_attempt(attempt + 1, max_retries)
+                                .with_reason(error_kind),
+                        ),
                     );
                     last_error = Some(e.into());
                     if attempt + 1 < max_retries {
@@ -391,6 +449,13 @@ impl KiroProvider {
                 if let Some(rpm) = &self.rpm_tracker {
                     rpm.record_credential(ctx.id);
                 }
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiSuccess, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_url(&url),
+                    ),
+                );
                 return Ok(response);
             }
 
@@ -399,6 +464,14 @@ impl KiroProvider {
 
             // 402 额度用尽
             if status.as_u16() == 402 && Self::is_monthly_request_limit(&body) {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::QuotaExhausted, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url),
+                    ),
+                );
                 let has_available = self.token_manager.report_quota_exhausted(ctx.id);
                 if !has_available {
                     anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
@@ -409,11 +482,32 @@ impl KiroProvider {
 
             // 400 Bad Request
             if status.as_u16() == 400 {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone())
+                            .with_reason("上游 400 请求格式错误，不重试"),
+                    ),
+                );
                 anyhow::bail!("MCP 请求失败: {} {}", status, body);
             }
 
             // 401/403 凭据问题
             if matches!(status.as_u16(), 401 | 403) {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone()),
+                    ),
+                );
                 let has_available = self.token_manager.report_failure(ctx.id);
                 if !has_available {
                     anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
@@ -430,6 +524,24 @@ impl KiroProvider {
                     max_retries,
                     status,
                     body
+                );
+                let rpm_val = self.rpm_tracker.as_ref().map(|tracker| {
+                    tracker
+                        .snapshot()
+                        .by_credential
+                        .get(&ctx.id)
+                        .copied()
+                        .unwrap_or(0)
+                });
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::RateLimited, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_rpm(rpm_val)
+                            .with_reason("上游 429 限流"),
+                    ),
                 );
                 self.token_manager.report_success(ctx.id);
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
@@ -448,6 +560,16 @@ impl KiroProvider {
                     status,
                     body
                 );
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_reason("上游瞬态错误"),
+                    ),
+                );
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
                 if attempt + 1 < max_retries {
                     sleep(Self::retry_delay(attempt)).await;
@@ -457,6 +579,16 @@ impl KiroProvider {
 
             // 其他 4xx
             if status.is_client_error() {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone()),
+                    ),
+                );
                 anyhow::bail!("MCP 请求失败: {} {}", status, body);
             }
 
@@ -510,11 +642,12 @@ impl KiroProvider {
                     continue;
                 }
             };
+            let headers_summary = Self::extract_headers_summary(&headers);
 
             // 发送请求
             let body = Self::inject_profile_arn(request_body, &ctx.credentials.profile_arn);
-            let response = match self
-                .client_for(&ctx.credentials)?
+            let (client, proxy_info) = self.client_for(&ctx.credentials)?;
+            let response = match client
                 .post(&url)
                 .headers(headers)
                 .body(body.clone())
@@ -523,6 +656,7 @@ impl KiroProvider {
             {
                 Ok(resp) => resp,
                 Err(e) => {
+                    let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
                         "API 请求发送失败（尝试 {}/{}）: {}",
                         attempt + 1,
@@ -531,6 +665,14 @@ impl KiroProvider {
                     );
                     // 网络错误通常是上游/链路瞬态问题，不应导致"禁用凭据"或"切换凭据"
                     // （否则一段时间网络抖动会把所有凭据都误禁用，需要重启才能恢复）
+                    self.emit_event(
+                        proxy_info.to_event(
+                            CredentialEvent::new(CredentialEventType::NetworkError, ctx.id)
+                                .with_url(&url)
+                                .with_attempt(attempt + 1, max_retries)
+                                .with_reason(error_kind),
+                        ),
+                    );
                     last_error = Some(e.into());
                     if attempt + 1 < max_retries {
                         sleep(Self::retry_delay(attempt)).await;
@@ -547,6 +689,13 @@ impl KiroProvider {
                 if let Some(rpm) = &self.rpm_tracker {
                     rpm.record_credential(ctx.id);
                 }
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiSuccess, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_url(&url),
+                    ),
+                );
                 return Ok(response);
             }
 
@@ -563,6 +712,14 @@ impl KiroProvider {
                     body
                 );
 
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::QuotaExhausted, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url),
+                    ),
+                );
                 let has_available = self.token_manager.report_quota_exhausted(ctx.id);
                 if !has_available {
                     anyhow::bail!(
@@ -584,6 +741,17 @@ impl KiroProvider {
 
             // 400 Bad Request - 请求问题，重试/切换凭据无意义
             if status.as_u16() == 400 {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone())
+                            .with_reason("上游 400 请求格式错误，不重试"),
+                    ),
+                );
                 anyhow::bail!("{} API 请求失败: {} {}", api_type, status, body);
             }
 
@@ -597,6 +765,16 @@ impl KiroProvider {
                     body
                 );
 
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone()),
+                    ),
+                );
                 let has_available = self.token_manager.report_failure(ctx.id);
                 if !has_available {
                     anyhow::bail!(
@@ -626,6 +804,24 @@ impl KiroProvider {
                     body
                 );
                 // 递增 success_count，使 balanced 模式下一次 acquire_context 选择其他凭据
+                let rpm_val = self.rpm_tracker.as_ref().map(|tracker| {
+                    tracker
+                        .snapshot()
+                        .by_credential
+                        .get(&ctx.id)
+                        .copied()
+                        .unwrap_or(0)
+                });
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::RateLimited, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_rpm(rpm_val)
+                            .with_reason("上游 429 限流"),
+                    ),
+                );
                 self.token_manager.report_success(ctx.id);
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求失败: {} {}",
@@ -649,6 +845,16 @@ impl KiroProvider {
                     status,
                     body
                 );
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_reason("上游瞬态错误"),
+                    ),
+                );
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求失败: {} {}",
                     api_type,
@@ -663,6 +869,16 @@ impl KiroProvider {
 
             // 其他 4xx - 通常为请求/配置问题：直接返回，不计入凭据失败
             if status.is_client_error() {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone()),
+                    ),
+                );
                 anyhow::bail!("{} API 请求失败: {} {}", api_type, status, body);
             }
 
@@ -680,6 +896,16 @@ impl KiroProvider {
                 status,
                 body
             ));
+            self.emit_event(
+                proxy_info.to_event(
+                    CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                        .with_status(status.as_u16())
+                        .with_body(&body)
+                        .with_url(&url)
+                        .with_attempt(attempt + 1, max_retries)
+                        .with_reason("未知上游错误"),
+                ),
+            );
             if attempt + 1 < max_retries {
                 sleep(Self::retry_delay(attempt)).await;
             }
@@ -704,6 +930,71 @@ impl KiroProvider {
         let jitter_max = (backoff / 4).max(1);
         let jitter = fastrand::u64(0..=jitter_max);
         Duration::from_millis(backoff.saturating_add(jitter))
+    }
+
+    fn extract_headers_summary(headers: &HeaderMap) -> HashMap<String, String> {
+        let mut summary = HashMap::new();
+        for name in [
+            "content-type",
+            "host",
+            "x-amz-user-agent",
+            "x-amzn-kiro-agent-mode",
+            "user-agent",
+            "tokentype",
+            "amz-sdk-request",
+        ] {
+            if let Some(value) = headers.get(name) {
+                if let Ok(value) = value.to_str() {
+                    summary.insert(name.to_string(), value.to_string());
+                }
+            }
+        }
+        if headers.contains_key(AUTHORIZATION) {
+            summary.insert("authorization".to_string(), "Bearer ***".to_string());
+        }
+        summary
+    }
+
+    fn classify_network_error(err: &reqwest::Error) -> &'static str {
+        if err.is_timeout() {
+            return "request_timeout";
+        }
+        if err.is_connect() {
+            let lower = format!("{:#}", err).to_lowercase();
+            if lower.contains("connection refused") {
+                return "connection_refused";
+            }
+            if lower.contains("timed out") || lower.contains("connect timeout") {
+                return "connection_timeout";
+            }
+            if lower.contains("dns")
+                || lower.contains("resolve")
+                || lower.contains("name or service not known")
+            {
+                return "dns_error";
+            }
+            if lower.contains("tls") || lower.contains("ssl") || lower.contains("certificate") {
+                return "tls_error";
+            }
+            return "connection_error";
+        }
+
+        let mut source = err.source();
+        while let Some(cause) = source {
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                return match io_err.kind() {
+                    std::io::ErrorKind::ConnectionReset => "connection_reset",
+                    std::io::ErrorKind::ConnectionRefused => "connection_refused",
+                    std::io::ErrorKind::ConnectionAborted => "connection_aborted",
+                    std::io::ErrorKind::TimedOut => "request_timeout",
+                    std::io::ErrorKind::BrokenPipe => "broken_pipe",
+                    _ => "io_error",
+                };
+            }
+            source = cause.source();
+        }
+
+        "network_error"
     }
 
     fn is_monthly_request_limit(body: &str) -> bool {
