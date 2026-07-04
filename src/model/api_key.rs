@@ -107,7 +107,11 @@ fn generate_api_key() -> String {
 /// API Key 认证结果
 pub enum ApiKeyAuthResult {
     /// 认证通过，携带 key ID 和名称
-    Valid { id: u32, name: String, spending_limit: Option<f64> },
+    Valid {
+        id: u32,
+        name: String,
+        spending_limit: Option<f64>,
+    },
     /// Key 已被禁用
     Disabled,
     /// Key 已过期
@@ -193,7 +197,13 @@ impl ApiKeyManager {
     }
 
     /// 创建新 key
-    pub fn create(&self, name: String, expires_at: Option<DateTime<Utc>>, spending_limit: Option<f64>, duration_days: Option<f64>) -> anyhow::Result<ApiKey> {
+    pub fn create(
+        &self,
+        name: String,
+        expires_at: Option<DateTime<Utc>>,
+        spending_limit: Option<f64>,
+        duration_days: Option<f64>,
+    ) -> anyhow::Result<ApiKey> {
         let mut keys = self.keys.write();
         let next_id = keys.iter().map(|k| k.id).max().unwrap_or(0) + 1;
         let api_key = ApiKey::new(next_id, name, expires_at, spending_limit, duration_days);
@@ -234,11 +244,13 @@ impl ApiKeyManager {
                 Some(new_days) => {
                     if api_key.is_active() && api_key.expires_at.is_some() {
                         // 活跃 Key（有到期时间）：在当前到期时间上增量续期
-                        let extension = chrono::Duration::milliseconds((new_days * 86_400_000.0) as i64);
+                        let extension =
+                            chrono::Duration::milliseconds((new_days * 86_400_000.0) as i64);
                         let new_expires = api_key.expires_at.unwrap() + extension;
                         api_key.expires_at = Some(new_expires);
                         // 重算 duration_days 为从激活到新到期的总天数
-                        let total_ms = (new_expires - api_key.activated_at.unwrap()).num_milliseconds();
+                        let total_ms =
+                            (new_expires - api_key.activated_at.unwrap()).num_milliseconds();
                         api_key.duration_days = Some(total_ms as f64 / 86_400_000.0);
                     } else {
                         // 已过期或待激活：重置为待激活状态
@@ -291,5 +303,5 @@ impl ApiKeyManager {
         }
         Ok(())
     }
-// APPEND_MARKER2
+    // APPEND_MARKER2
 }

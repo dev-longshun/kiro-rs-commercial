@@ -133,13 +133,7 @@ impl UsageTracker {
     }
 
     /// 记录一次请求用量
-    pub fn record(
-        &self,
-        api_key_id: u32,
-        model: String,
-        input_tokens: i32,
-        output_tokens: i32,
-    ) {
+    pub fn record(&self, api_key_id: u32, model: String, input_tokens: i32, output_tokens: i32) {
         let cost = calculate_cost(&model, input_tokens, output_tokens);
         let record = UsageRecord {
             api_key_id,

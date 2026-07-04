@@ -21,6 +21,7 @@ mod api_keys;
 mod error;
 mod handlers;
 mod middleware;
+mod proxy_pool;
 mod router;
 mod service;
 pub mod types;

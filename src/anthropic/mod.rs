@@ -22,6 +22,7 @@
 //! axum::serve(listener, app).await?;
 //! ```
 
+pub(crate) mod compaction;
 mod converter;
 mod handlers;
 pub mod middleware;

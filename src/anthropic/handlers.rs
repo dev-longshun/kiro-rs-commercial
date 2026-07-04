@@ -2,18 +2,17 @@
 
 use std::convert::Infallible;
 
-use anyhow::Error;
 use crate::kiro::model::events::Event;
 use crate::kiro::model::requests::kiro::KiroRequest;
 use crate::kiro::parser::decoder::EventStreamDecoder;
 use crate::token;
+use anyhow::Error;
 use axum::{
-    Json as JsonExtractor,
+    Extension, Json as JsonExtractor,
     body::Body,
     extract::State,
     http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
-    Extension,
 };
 use bytes::Bytes;
 use futures::{Stream, StreamExt, stream};
@@ -23,9 +22,12 @@ use tokio::time::interval;
 use uuid::Uuid;
 
 use super::converter::{ConversionError, convert_request};
-use super::middleware::{AppState, ApiKeyContext};
+use super::middleware::{ApiKeyContext, AppState};
 use super::stream::{BufferedStreamContext, SseEvent, StreamContext};
-use super::types::{CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse, OutputConfig, Thinking};
+use super::types::{
+    CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse,
+    OutputConfig, Thinking,
+};
 use super::websearch;
 
 /// GET /v1/ping
@@ -65,7 +67,11 @@ fn map_provider_error(err: Error) -> Response {
     map_provider_error_with_context(err, "", 0)
 }
 
-fn map_provider_error_with_context(err: Error, model: &str, estimated_input_tokens: i32) -> Response {
+fn map_provider_error_with_context(
+    err: Error,
+    model: &str,
+    estimated_input_tokens: i32,
+) -> Response {
     let err_str = err.to_string();
 
     // 上下文窗口满了（对话历史累积超出模型上下文窗口限制）
@@ -425,9 +431,7 @@ pub(crate) fn build_model_list() -> Vec<Model> {
 /// GET /v1/models/:model_id
 ///
 /// 返回指定模型的信息
-pub async fn get_model(
-    axum::extract::Path(model_id): axum::extract::Path<String>,
-) -> Response {
+pub async fn get_model(axum::extract::Path(model_id): axum::extract::Path<String>) -> Response {
     tracing::info!(model_id = %model_id, "Received GET /v1/models/:model_id request");
 
     // 复用 get_models 的模型列表，查找匹配的模型
@@ -486,6 +490,25 @@ pub async fn post_messages(
 
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
+
+    let compaction = super::compaction::compact_if_needed(
+        &payload.messages,
+        &payload.system,
+        &payload.tools,
+        &state.compaction_config.read(),
+    );
+    if compaction.compacted {
+        tracing::info!(
+            original_estimate = compaction.original_estimate,
+            compacted_estimate = compaction.compacted_estimate,
+            tool_results_compressed = compaction.tool_results_compressed,
+            thinking_blocks_removed = compaction.thinking_blocks_removed,
+            images_removed = compaction.images_removed,
+            pairs_dropped = compaction.pairs_dropped,
+            "请求上下文已执行 compaction"
+        );
+        payload.messages = compaction.messages;
+    }
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
@@ -808,14 +831,14 @@ async fn handle_non_stream_request(
                                 let input: serde_json::Value = if buffer.is_empty() {
                                     serde_json::json!({})
                                 } else {
-                                    serde_json::from_str(buffer)
-                                        .unwrap_or_else(|e| {
-                                            tracing::warn!(
-                                                "工具输入 JSON 解析失败: {}, tool_use_id: {}",
-                                                e, tool_use.tool_use_id
-                                            );
-                                            serde_json::json!({})
-                                        })
+                                    serde_json::from_str(buffer).unwrap_or_else(|e| {
+                                        tracing::warn!(
+                                            "工具输入 JSON 解析失败: {}, tool_use_id: {}",
+                                            e,
+                                            tool_use.tool_use_id
+                                        );
+                                        serde_json::json!({})
+                                    })
                                 };
 
                                 tool_uses.push(json!({
@@ -923,14 +946,10 @@ fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
         return;
     }
 
-    let is_opus_4_6 =
-        model_lower.contains("opus") && (model_lower.contains("4-6") || model_lower.contains("4.6"));
+    let is_opus_4_6 = model_lower.contains("opus")
+        && (model_lower.contains("4-6") || model_lower.contains("4.6"));
 
-    let thinking_type = if is_opus_4_6 {
-        "adaptive"
-    } else {
-        "enabled"
-    };
+    let thinking_type = if is_opus_4_6 { "adaptive" } else { "enabled" };
 
     tracing::info!(
         model = %payload.model,
@@ -942,7 +961,7 @@ fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
         thinking_type: thinking_type.to_string(),
         budget_tokens: 20000,
     });
-    
+
     if is_opus_4_6 {
         payload.output_config = Some(OutputConfig {
             effort: "high".to_string(),
@@ -1011,6 +1030,25 @@ pub async fn post_messages_cc(
 
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
+
+    let compaction = super::compaction::compact_if_needed(
+        &payload.messages,
+        &payload.system,
+        &payload.tools,
+        &state.compaction_config.read(),
+    );
+    if compaction.compacted {
+        tracing::info!(
+            original_estimate = compaction.original_estimate,
+            compacted_estimate = compaction.compacted_estimate,
+            tool_results_compressed = compaction.tool_results_compressed,
+            thinking_blocks_removed = compaction.thinking_blocks_removed,
+            images_removed = compaction.images_removed,
+            pairs_dropped = compaction.pairs_dropped,
+            "CC 请求上下文已执行 compaction"
+        );
+        payload.messages = compaction.messages;
+    }
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {

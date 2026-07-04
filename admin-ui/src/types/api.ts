@@ -22,6 +22,15 @@ export interface CredentialStatusItem {
   lastUsedAt: string | null
   hasProxy: boolean
   proxyUrl?: string
+  accountSource?: string
+  accountSourceLabel?: string
+  kamIdp?: string
+  kamProvider?: string
+  kamGroupId?: string
+  kamGroupName?: string
+  labels: string[]
+  lastTokenRefreshAt?: string
+  lastLivenessCheckAt?: string
 }
 
 // 余额响应
@@ -33,6 +42,47 @@ export interface BalanceResponse {
   remaining: number
   usagePercentage: number
   nextResetAt: number | null
+  queriedAt?: number | null
+  overageEnabled?: boolean
+  overageCapable?: boolean
+  overageCapabilityRaw?: string
+}
+
+export interface BalanceSummaryResponse {
+  totalRemaining: number
+  totalLimit: number
+  queriedCount: number
+  totalCount: number
+  balances: BalanceResponse[]
+  lastUpdatedAt: number | null
+}
+
+export interface BalanceAutoRefreshSettings {
+  enabled: boolean
+  intervalSecs: number
+  running: boolean
+  lastStartedAt: number | null
+  lastFinishedAt: number | null
+}
+
+export interface SetBalanceAutoRefreshSettingsRequest {
+  enabled?: boolean
+  intervalSecs?: number
+}
+
+export interface LivenessCheckResponse {
+  id: number
+  status: string
+  checkedAt: string
+  latencyMs?: number
+  message?: string
+}
+
+export interface EnableOverageAllResult {
+  enabledIds: number[]
+  skippedIds: number[]
+  failedIds: number[]
+  failureMessages: string[]
 }
 
 // 成功响应
@@ -98,6 +148,13 @@ export interface AddCredentialRequest {
   apiRegion?: string
   machineId?: string
   email?: string
+  accountSource?: string
+  accountSourceLabel?: string
+  kamIdp?: string
+  kamProvider?: string
+  kamGroupId?: string
+  kamGroupName?: string
+  labels?: string[]
   proxyUrl?: string
   proxyUsername?: string
   proxyPassword?: string
@@ -116,6 +173,13 @@ export interface UpdateCredentialRequest {
   apiRegion?: string
   machineId?: string
   email?: string
+  accountSource?: string
+  accountSourceLabel?: string
+  kamIdp?: string
+  kamProvider?: string
+  kamGroupId?: string
+  kamGroupName?: string
+  labels?: string[]
   proxyUrl?: string
   proxyUsername?: string
   proxyPassword?: string
@@ -127,6 +191,39 @@ export interface AddCredentialResponse {
   message: string
   credentialId: number
   email?: string
+}
+
+export interface BuilderIdStartResponse {
+  sessionId: string
+  userCode: string
+  verificationUri: string
+  interval: number
+}
+
+export interface IamSsoStartResponse {
+  sessionId: string
+  authorizeUrl: string
+  expiresIn: number
+}
+
+export interface KiroSsoStartResponse {
+  sessionId: string
+  signInUrl: string
+  interval: number
+}
+
+export interface AuthFlowPollResponse {
+  success: boolean
+  completed: boolean
+  status?: string
+  interval?: number
+  account?: AddCredentialResponse
+}
+
+export interface SsoTokenImportResponse {
+  success: boolean
+  accounts: AddCredentialResponse[]
+  errors: string[]
 }
 
 // API Key 类型
@@ -180,4 +277,68 @@ export interface RpmSnapshot {
   global: number
   byCredential: Record<string, number>
   byApiKey: Record<string, number>
+}
+
+export interface ProxyPoolEntry {
+  id: number
+  name: string
+  url: string
+  username?: string
+  hasPassword: boolean
+  tags: string[]
+  enabled: boolean
+  healthy: boolean
+  lastCheckedAt?: string | null
+  latencyMs?: number | null
+  exitIp?: string | null
+  lastError?: string | null
+  consecutiveFailures: number
+}
+
+export interface AddProxyRequest {
+  name: string
+  url: string
+  username?: string
+  password?: string
+  tags?: string[]
+}
+
+export interface UpdateProxyRequest {
+  name?: string
+  url?: string
+  username?: string | null
+  password?: string | null
+  tags?: string[]
+}
+
+export interface ProxyBindingEntry {
+  proxyId: number
+  proxyName: string
+  credentials: Array<{ id: number; email?: string | null; disabled: boolean }>
+}
+
+export interface SetProxyBindingRequest {
+  proxyId?: number | null
+  direct?: boolean
+}
+
+export interface ExitIpResult {
+  name: string
+  proxyId?: number | null
+  exitIp?: string | null
+  error?: string | null
+  latencyMs: number
+}
+
+export interface CompactionConfig {
+  enabled: boolean
+  thresholdPercent: number
+  preserveRecentPairs: number
+  toolResultMaxChars: number
+}
+
+export interface KamExportResponse {
+  schemaVersion: string
+  exportedAt: number
+  accounts: unknown[]
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, Loader2, Pencil, ScrollText } from 'lucide-react'
+import { Activity, RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, Loader2, Pencil, ScrollText, Zap } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -21,9 +21,13 @@ import {
   useSetPriority,
   useResetFailure,
   useDeleteCredential,
+  useRefreshCredentialToken,
+  useLivenessCheck,
+  useSetOverage,
 } from '@/hooks/use-credentials'
 import { EditCredentialDialog } from './edit-credential-dialog'
 import { CredentialEventsDialog } from './credential-events-dialog'
+import { extractErrorMessage } from '@/lib/utils'
 
 interface CredentialCardProps {
   credential: CredentialStatusItem
@@ -51,6 +55,13 @@ function formatLastUsed(lastUsedAt: string | null): string {
   return `${days} 天前`
 }
 
+function formatDate(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('zh-CN')
+}
+
 export function CredentialCard({
   credential,
   onViewBalance,
@@ -70,6 +81,9 @@ export function CredentialCard({
   const setPriority = useSetPriority()
   const resetFailure = useResetFailure()
   const deleteCredential = useDeleteCredential()
+  const refreshToken = useRefreshCredentialToken()
+  const livenessCheck = useLivenessCheck()
+  const setOverage = useSetOverage()
 
   const handleToggleDisabled = () => {
     setDisabled.mutate(
@@ -134,6 +148,34 @@ export function CredentialCard({
     })
   }
 
+  const handleRefreshToken = () => {
+    refreshToken.mutate(credential.id, {
+      onSuccess: (res) => toast.success(res.message),
+      onError: (err) => toast.error(`刷新失败: ${extractErrorMessage(err)}`),
+    })
+  }
+
+  const handleLivenessCheck = () => {
+    livenessCheck.mutate(credential.id, {
+      onSuccess: (res) => toast.success(res.message || `存活检测: ${res.status}`),
+      onError: (err) => toast.error(`检测失败: ${extractErrorMessage(err)}`),
+    })
+  }
+
+  const handleToggleOverage = () => {
+    if (!balance?.overageCapable) {
+      toast.error('当前账号不可开启超额或余额状态未知')
+      return
+    }
+    setOverage.mutate(
+      { id: credential.id, enabled: !balance.overageEnabled },
+      {
+        onSuccess: (res) => toast.success(res.message),
+        onError: (err) => toast.error(`超额设置失败: ${extractErrorMessage(err)}`),
+      }
+    )
+  }
+
   return (
     <>
       <Card className={credential.isCurrent ? 'ring-2 ring-primary' : ''}>
@@ -152,6 +194,9 @@ export function CredentialCard({
                 )}
                 {credential.disabled && (
                   <Badge variant="destructive">已禁用</Badge>
+                )}
+                {credential.accountSourceLabel && (
+                  <Badge variant="outline">{credential.accountSourceLabel}</Badge>
                 )}
               </CardTitle>
             </div>
@@ -232,9 +277,27 @@ export function CredentialCard({
               <span className="text-muted-foreground">RPM：</span>
               <span className="font-medium text-nb-blue">{rpm}</span>
             </div>
+            <div>
+              <span className="text-muted-foreground">超额：</span>
+              {loadingBalance ? (
+                <Loader2 className="inline w-3 h-3 animate-spin" />
+              ) : balance?.overageEnabled ? (
+                <Badge variant="info">已开启</Badge>
+              ) : balance?.overageCapable ? (
+                <Badge variant="warning">可开启</Badge>
+              ) : balance?.overageCapable === false ? (
+                <Badge variant="secondary">不可开启</Badge>
+              ) : (
+                <span className="text-muted-foreground">未知</span>
+              )}
+            </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>
               <span className="font-medium">{formatLastUsed(credential.lastUsedAt)}</span>
+            </div>
+            <div className="col-span-2 grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+              <span>Token 刷新：{formatDate(credential.lastTokenRefreshAt)}</span>
+              <span>存活检测：{formatDate(credential.lastLivenessCheckAt)}</span>
             </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">已用量：</span>
@@ -251,16 +314,27 @@ export function CredentialCard({
                     </span>
                   </div>
                   <div className="h-2.5 w-full overflow-hidden border-[2px] border-border bg-background rounded-sm">
-                    <div
-                      className={`h-full transition-all ${balance.usagePercentage > 100 ? 'bg-purple-500' : balance.usagePercentage > 80 ? 'bg-nb-red' : balance.usagePercentage > 60 ? 'bg-nb-yellow' : 'bg-nb-green'}`}
-                      style={{ width: `${Math.min(balance.usagePercentage, 100)}%` }}
-                    />
+                  <div
+                    className={`h-full transition-all ${balance.usagePercentage > 100 ? 'bg-purple-500' : balance.usagePercentage > 80 ? 'bg-nb-red' : balance.usagePercentage > 60 ? 'bg-nb-yellow' : 'bg-nb-green'}`}
+                    style={{ width: `${Math.min(balance.usagePercentage, 100)}%` }}
+                  />
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    查询时间：{balance.queriedAt ? new Date(balance.queriedAt * 1000).toLocaleString('zh-CN') : '—'}
                   </div>
                 </div>
               ) : (
                 <span className="text-sm text-muted-foreground ml-1">未知</span>
               )}
             </div>
+            {(credential.kamGroupName || credential.labels.length > 0) && (
+              <div className="col-span-2 flex flex-wrap gap-1">
+                {credential.kamGroupName && <Badge variant="secondary">{credential.kamGroupName}</Badge>}
+                {credential.labels.slice(0, 4).map((label) => (
+                  <Badge key={label} variant="outline" className="normal-case">{label}</Badge>
+                ))}
+              </div>
+            )}
             {credential.hasProxy && (
               <div className="col-span-2">
                 <span className="text-muted-foreground">代理：</span>
@@ -285,6 +359,35 @@ export function CredentialCard({
               <RefreshCw className="h-4 w-4 mr-1" />
               重置失败
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRefreshToken}
+              disabled={refreshToken.isPending}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${refreshToken.isPending ? 'animate-spin' : ''}`} />
+              刷新 Token
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleLivenessCheck}
+              disabled={livenessCheck.isPending}
+            >
+              <Activity className="h-4 w-4 mr-1" />
+              存活检测
+            </Button>
+            {balance?.overageCapable && (
+              <Button
+                size="sm"
+                variant={balance.overageEnabled ? 'secondary' : 'info'}
+                onClick={handleToggleOverage}
+                disabled={setOverage.isPending}
+              >
+                <Zap className="h-4 w-4 mr-1" />
+                {balance.overageEnabled ? '关闭超额' : '开启超额'}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"

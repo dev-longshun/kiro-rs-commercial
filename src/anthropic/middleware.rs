@@ -44,6 +44,8 @@ pub struct AppState {
     pub rpm_tracker: Option<Arc<RpmTracker>>,
     /// Token 管理器（用于读取缓存模拟配置）
     pub token_manager: Option<Arc<MultiTokenManager>>,
+    /// 全局上下文压缩配置
+    pub compaction_config: Arc<RwLock<super::compaction::CompactionConfig>>,
 }
 
 impl AppState {
@@ -56,6 +58,9 @@ impl AppState {
             usage_tracker: None,
             rpm_tracker: None,
             token_manager: None,
+            compaction_config: Arc::new(RwLock::new(
+                super::compaction::CompactionConfig::disabled(),
+            )),
         }
     }
 
@@ -88,6 +93,21 @@ impl AppState {
         self.token_manager = Some(tm);
         self
     }
+
+    /// 设置全局上下文压缩配置
+    pub fn with_compaction_config(mut self, config: super::compaction::CompactionConfig) -> Self {
+        self.compaction_config = Arc::new(RwLock::new(config));
+        self
+    }
+
+    /// 设置可共享的全局上下文压缩配置
+    pub fn with_compaction_config_store(
+        mut self,
+        config: Arc<RwLock<super::compaction::CompactionConfig>>,
+    ) -> Self {
+        self.compaction_config = config;
+        self
+    }
 }
 
 /// API Key 认证中间件
@@ -118,7 +138,11 @@ pub async fn auth_middleware(
     // 2. 尝试子 API Key 认证
     if let Some(manager) = &state.api_key_manager {
         match manager.authenticate(&key) {
-            ApiKeyAuthResult::Valid { id, name, spending_limit } => {
+            ApiKeyAuthResult::Valid {
+                id,
+                name,
+                spending_limit,
+            } => {
                 // 懒激活：首次使用时激活 key
                 if let Err(e) = manager.activate_key(id) {
                     tracing::warn!(api_key_id = id, error = %e, "激活 API Key 失败");
@@ -147,10 +171,9 @@ pub async fn auth_middleware(
                 }
 
                 tracing::debug!(api_key_id = id, api_key_name = %name, "子 API Key 认证通过");
-                request.extensions_mut().insert(ApiKeyContext {
-                    id,
-                    spending_limit,
-                });
+                request
+                    .extensions_mut()
+                    .insert(ApiKeyContext { id, spending_limit });
                 return next.run(request).await;
             }
             ApiKeyAuthResult::Expired => {

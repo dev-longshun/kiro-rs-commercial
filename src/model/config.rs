@@ -1,8 +1,8 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::env;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -103,6 +103,30 @@ pub struct Config {
     #[serde(default = "default_cache_creation_ratio")]
     pub cache_creation_ratio: f64,
 
+    /// 余额自动刷新开关（后台定时刷新所有凭据余额）
+    #[serde(default)]
+    pub balance_auto_refresh_enabled: bool,
+
+    /// 余额自动刷新间隔（秒）
+    #[serde(default = "default_balance_auto_refresh_interval_secs")]
+    pub balance_auto_refresh_interval_secs: u64,
+
+    /// Compaction 开关（默认关闭）
+    #[serde(default)]
+    pub compaction_enabled: bool,
+
+    /// Compaction 触发阈值（占 1M 上下文窗口百分比）
+    #[serde(default = "default_compaction_threshold_percent")]
+    pub compaction_threshold_percent: f64,
+
+    /// 保留最近 N 个消息对不压缩
+    #[serde(default = "default_compaction_preserve_recent_pairs")]
+    pub compaction_preserve_recent_pairs: usize,
+
+    /// 工具结果压缩后的最大字符数
+    #[serde(default = "default_compaction_tool_result_max_chars")]
+    pub compaction_tool_result_max_chars: usize,
+
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
@@ -153,6 +177,22 @@ fn default_cache_creation_ratio() -> f64 {
     0.10
 }
 
+fn default_balance_auto_refresh_interval_secs() -> u64 {
+    3600
+}
+
+fn default_compaction_threshold_percent() -> f64 {
+    80.0
+}
+
+fn default_compaction_preserve_recent_pairs() -> usize {
+    10
+}
+
+fn default_compaction_tool_result_max_chars() -> usize {
+    200
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -178,6 +218,12 @@ impl Default for Config {
             cache_simulation_enabled: false,
             cache_read_ratio: default_cache_read_ratio(),
             cache_creation_ratio: default_cache_creation_ratio(),
+            balance_auto_refresh_enabled: false,
+            balance_auto_refresh_interval_secs: default_balance_auto_refresh_interval_secs(),
+            compaction_enabled: false,
+            compaction_threshold_percent: default_compaction_threshold_percent(),
+            compaction_preserve_recent_pairs: default_compaction_preserve_recent_pairs(),
+            compaction_tool_result_max_chars: default_compaction_tool_result_max_chars(),
             config_path: None,
         }
     }
@@ -230,7 +276,8 @@ impl Config {
             .ok_or_else(|| anyhow::anyhow!("配置文件路径未知，无法保存配置"))?;
 
         let content = serde_json::to_string_pretty(self).context("序列化配置失败")?;
-        fs::write(path, content).with_context(|| format!("写入配置文件失败: {}", path.display()))?;
+        fs::write(path, content)
+            .with_context(|| format!("写入配置文件失败: {}", path.display()))?;
         Ok(())
     }
 

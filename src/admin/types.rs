@@ -51,6 +51,32 @@ pub struct CredentialStatusItem {
     /// 代理 URL（用于前端展示）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// 账号来源分类
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_source: Option<String>,
+    /// 账号来源展示标签
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_source_label: Option<String>,
+    /// KAM 顶层 idp 原始值
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kam_idp: Option<String>,
+    /// KAM credentials.provider 原始值
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kam_provider: Option<String>,
+    /// KAM 分组 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kam_group_id: Option<String>,
+    /// KAM 分组名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kam_group_name: Option<String>,
+    /// KAM / 手动标签
+    pub labels: Vec<String>,
+    /// 最近一次显式 Token 刷新时间（RFC3339）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_token_refresh_at: Option<String>,
+    /// 最近一次存活检测时间（RFC3339）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_liveness_check_at: Option<String>,
 }
 
 // ============ 操作请求 ============
@@ -127,6 +153,28 @@ pub struct AddCredentialRequest {
     /// 用户邮箱（可选，用于前端显示）
     pub email: Option<String>,
 
+    /// 账号来源分类
+    pub account_source: Option<String>,
+
+    /// 账号来源展示标签
+    pub account_source_label: Option<String>,
+
+    /// KAM 顶层 idp 原始值
+    pub kam_idp: Option<String>,
+
+    /// KAM credentials.provider 原始值
+    pub kam_provider: Option<String>,
+
+    /// KAM 分组 ID
+    pub kam_group_id: Option<String>,
+
+    /// KAM 分组名称
+    pub kam_group_name: Option<String>,
+
+    /// KAM / 手动标签
+    #[serde(default)]
+    pub labels: Vec<String>,
+
     /// 凭据级代理 URL（可选，特殊值 "direct" 表示不使用代理）
     pub proxy_url: Option<String>,
 
@@ -152,6 +200,96 @@ pub struct AddCredentialResponse {
     /// 用户邮箱（如果获取成功）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+}
+
+// ============ 登录/导入流程 ============
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuilderIdStartRequest {
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuilderIdStartResponse {
+    pub session_id: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthSessionPollRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowPollResponse {
+    pub success: bool,
+    pub completed: bool,
+    pub status: Option<String>,
+    pub interval: Option<u64>,
+    pub account: Option<AddCredentialResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IamSsoStartRequest {
+    pub start_url: String,
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IamSsoStartResponse {
+    pub session_id: String,
+    pub authorize_url: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IamSsoCompleteRequest {
+    pub session_id: String,
+    pub callback_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KiroSsoStartRequest {
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KiroSsoStartResponse {
+    pub session_id: String,
+    pub sign_in_url: String,
+    pub interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KiroSsoCancelRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SsoTokenImportRequest {
+    pub bearer_token: String,
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SsoTokenImportResponse {
+    pub success: bool,
+    pub accounts: Vec<AddCredentialResponse>,
+    pub errors: Vec<String>,
 }
 
 /// 更新凭据请求（所有字段可选，只更新提供的字段）
@@ -188,6 +326,30 @@ pub struct UpdateCredentialRequest {
     /// 凭据级 Machine ID（可选）
     pub machine_id: Option<String>,
 
+    /// 用户邮箱（可选）
+    pub email: Option<String>,
+
+    /// 账号来源分类
+    pub account_source: Option<String>,
+
+    /// 账号来源展示标签
+    pub account_source_label: Option<String>,
+
+    /// KAM 顶层 idp 原始值
+    pub kam_idp: Option<String>,
+
+    /// KAM credentials.provider 原始值
+    pub kam_provider: Option<String>,
+
+    /// KAM 分组 ID
+    pub kam_group_id: Option<String>,
+
+    /// KAM 分组名称
+    pub kam_group_name: Option<String>,
+
+    /// KAM / 手动标签
+    pub labels: Option<Vec<String>>,
+
     /// 凭据级代理 URL（可选）
     pub proxy_url: Option<String>,
 
@@ -218,6 +380,107 @@ pub struct BalanceResponse {
     pub usage_percentage: f64,
     /// 下次重置时间（Unix 时间戳）
     pub next_reset_at: Option<f64>,
+    /// 本条余额数据的查询时间（Unix 秒）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queried_at: Option<f64>,
+    /// 用户当前是否开启了超额
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overage_enabled: Option<bool>,
+    /// 账号是否能开启超额
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overage_capable: Option<bool>,
+    /// 上游 overageCapability 原始字符串
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overage_capability_raw: Option<String>,
+}
+
+/// 单账号超额开关请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetOverageRequest {
+    pub enabled: bool,
+}
+
+/// 批量开启超额请求
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableOverageAllRequest {
+    #[serde(default)]
+    pub ids: Option<Vec<u64>>,
+    #[serde(default)]
+    pub all: bool,
+}
+
+/// 批量开启超额结果
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableOverageAllResult {
+    pub enabled_ids: Vec<u64>,
+    pub skipped_ids: Vec<u64>,
+    pub failed_ids: Vec<u64>,
+    pub failure_messages: Vec<String>,
+}
+
+/// 全局余额汇总响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceSummaryResponse {
+    pub total_remaining: f64,
+    pub total_limit: f64,
+    pub queried_count: usize,
+    pub total_count: usize,
+    pub balances: Vec<BalanceResponse>,
+    pub last_updated_at: Option<f64>,
+}
+
+/// 余额自动刷新设置
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceAutoRefreshSettingsResponse {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub running: bool,
+    pub last_started_at: Option<f64>,
+    pub last_finished_at: Option<f64>,
+}
+
+/// 更新余额自动刷新设置
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetBalanceAutoRefreshSettingsRequest {
+    pub enabled: Option<bool>,
+    pub interval_secs: Option<u64>,
+}
+
+/// Compaction 配置响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionConfigResponse {
+    pub enabled: bool,
+    pub threshold_percent: f64,
+    pub preserve_recent_pairs: usize,
+    pub tool_result_max_chars: usize,
+}
+
+/// 更新 Compaction 配置请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCompactionConfigRequest {
+    pub enabled: bool,
+    pub threshold_percent: f64,
+    pub preserve_recent_pairs: usize,
+    pub tool_result_max_chars: usize,
+}
+
+/// 存活检测响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LivenessCheckResponse {
+    pub id: u64,
+    pub status: String,
+    pub checked_at: String,
+    pub latency_ms: Option<u64>,
+    pub message: Option<String>,
 }
 
 // ============ 负载均衡配置 ============
@@ -358,6 +621,126 @@ impl AdminErrorResponse {
     pub fn internal_error(message: impl Into<String>) -> Self {
         Self::new("internal_error", message)
     }
+}
+
+// ============ 代理池管理 ============
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddProxyRequest {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProxyRequest {
+    pub name: Option<String>,
+    pub url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub username: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub password: Option<Option<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetProxyEnabledRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetProxyBindingRequest {
+    pub proxy_id: Option<u32>,
+    #[serde(default)]
+    pub direct: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyBindingEntry {
+    pub proxy_id: u32,
+    pub proxy_name: String,
+    pub credentials: Vec<BoundCredentialInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundCredentialInfo {
+    pub id: u64,
+    pub email: Option<String>,
+    pub disabled: bool,
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
+// ============ KAM 导出 ============
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KamExportResponse {
+    pub schema_version: String,
+    pub exported_at: u64,
+    pub accounts: Vec<KamExportAccount>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KamExportAccount {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idp: Option<String>,
+    pub credentials: KamExportCredentials,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_source_label: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KamExportCredentials {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 // ============ 认证密钥管理 ============

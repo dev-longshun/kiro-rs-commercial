@@ -4,6 +4,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { useCredentialBalance } from '@/hooks/use-credentials'
 import { parseError } from '@/lib/utils'
@@ -67,6 +68,15 @@ export function BalanceDialog({ credentialId, open, onOpenChange }: BalanceDialo
               <span className="text-lg font-semibold">
                 {balance.subscriptionTitle || '未知订阅类型'}
               </span>
+              <div className="mt-2 flex justify-center gap-2">
+                {balance.overageEnabled ? (
+                  <Badge variant="info">超额已开启</Badge>
+                ) : balance.overageCapable ? (
+                  <Badge variant="warning">可开启超额</Badge>
+                ) : balance.overageCapable === false ? (
+                  <Badge variant="secondary">不可开启超额</Badge>
+                ) : null}
+              </div>
             </div>
 
             {/* 使用进度 */}
@@ -95,6 +105,18 @@ export function BalanceDialog({ credentialId, open, onOpenChange }: BalanceDialo
                   {formatDate(balance.nextResetAt)}
                 </span>
               </div>
+              <div className="col-span-2">
+                <span className="text-muted-foreground">查询时间：</span>
+                <span className="font-medium">
+                  {formatDate(balance.queriedAt ?? null)}
+                </span>
+              </div>
+              {balance.overageCapabilityRaw && (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground">超额能力：</span>
+                  <span className="font-mono text-xs">{balance.overageCapabilityRaw}</span>
+                </div>
+              )}
             </div>
           </div>
         )}

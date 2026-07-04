@@ -5,6 +5,14 @@ import {
   setCredentialPriority,
   resetCredentialFailure,
   getCredentialBalance,
+  refreshCredentialToken,
+  checkCredentialLiveness,
+  setCredentialOverage,
+  enableOverageForAllCapable,
+  getBalanceSummary,
+  refreshAllBalances,
+  getBalanceAutoRefreshSettings,
+  setBalanceAutoRefreshSettings,
   getCredentialEvents,
   getErrorEvents,
   clearErrorEvents,
@@ -21,13 +29,39 @@ import {
   getAllUsage,
   resetKeyUsage,
   getRpm,
+  getProxyPool,
+  addProxy,
+  updateProxy,
+  deleteProxy,
+  setProxyEnabled,
+  checkProxy,
+  getProxyBindings,
+  setProxyBinding,
+  rebalanceProxies,
+  deleteUnhealthyProxies,
+  deleteAllProxies,
+  disableHighLatencyProxies,
+  checkProxyExitIps,
+  exportKam,
+  getCompactionConfig,
+  setCompactionConfig,
   getAuthKeys,
   setAuthKeys,
   getCacheSimulationConfig,
   setCacheSimulationConfig,
 } from '@/api/credentials'
 import { storage } from '@/lib/storage'
-import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
+import type {
+  AddCredentialRequest,
+  UpdateCredentialRequest,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
+  AddProxyRequest,
+  UpdateProxyRequest,
+  SetBalanceAutoRefreshSettingsRequest,
+  SetProxyBindingRequest,
+  CompactionConfig,
+} from '@/types/api'
 import type { CacheSimulationConfig } from '@/api/credentials'
 
 // 查询凭据列表
@@ -43,9 +77,94 @@ export function useCredentials() {
 export function useCredentialBalance(id: number | null) {
   return useQuery({
     queryKey: ['credential-balance', id],
-    queryFn: () => getCredentialBalance(id!),
+    queryFn: () => getCredentialBalance(id!, true),
     enabled: id !== null,
     retry: false, // 余额查询失败时不重试（避免重复请求被封禁的账号）
+  })
+}
+
+export function useBalanceSummary(refetchInterval = 30000) {
+  return useQuery({
+    queryKey: ['balance-summary'],
+    queryFn: getBalanceSummary,
+    refetchInterval,
+  })
+}
+
+export function useRefreshAllBalances() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: refreshAllBalances,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['balance-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-balance'] })
+    },
+  })
+}
+
+export function useBalanceAutoRefreshSettings() {
+  return useQuery({
+    queryKey: ['balance-auto-refresh-settings'],
+    queryFn: getBalanceAutoRefreshSettings,
+  })
+}
+
+export function useSetBalanceAutoRefreshSettings() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: SetBalanceAutoRefreshSettingsRequest) =>
+      setBalanceAutoRefreshSettings(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['balance-auto-refresh-settings'] })
+      queryClient.invalidateQueries({ queryKey: ['balance-summary'] })
+    },
+  })
+}
+
+export function useRefreshCredentialToken() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => refreshCredentialToken(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-balance', id] })
+    },
+  })
+}
+
+export function useLivenessCheck() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => checkCredentialLiveness(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-balance', id] })
+    },
+  })
+}
+
+export function useSetOverage() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
+      setCredentialOverage(id, enabled),
+    onSuccess: (_data, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['balance-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-balance', id] })
+    },
+  })
+}
+
+export function useEnableOverageAll() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (ids?: number[]) => enableOverageForAllCapable(ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['balance-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['credential-balance'] })
+    },
   })
 }
 
@@ -249,6 +368,167 @@ export function useRpm() {
     queryKey: ['rpm'],
     queryFn: getRpm,
     refetchInterval: 5000,
+  })
+}
+
+// ============ 代理池 Hooks ============
+
+export function useProxyPool() {
+  return useQuery({
+    queryKey: ['proxyPool'],
+    queryFn: getProxyPool,
+    refetchInterval: 30000,
+  })
+}
+
+export function useAddProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: AddProxyRequest) => addProxy(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useUpdateProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateProxyRequest }) =>
+      updateProxy(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+export function useDeleteProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteProxy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+export function useSetProxyEnabled() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
+      setProxyEnabled(id, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useCheckProxy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => checkProxy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+    },
+  })
+}
+
+export function useProxyBindings() {
+  return useQuery({
+    queryKey: ['proxyBindings'],
+    queryFn: getProxyBindings,
+    refetchInterval: 30000,
+  })
+}
+
+export function useSetProxyBinding() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ credentialId, ...payload }: { credentialId: number } & SetProxyBindingRequest) =>
+      setProxyBinding(credentialId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+    },
+  })
+}
+
+export function useRebalanceProxies() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: rebalanceProxies,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+    },
+  })
+}
+
+export function useDeleteUnhealthyProxies() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteUnhealthyProxies,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+export function useDeleteAllProxies() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteAllProxies,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+export function useDisableHighLatencyProxies() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (thresholdMs: number) => disableHighLatencyProxies(thresholdMs),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxyPool'] })
+      queryClient.invalidateQueries({ queryKey: ['proxyBindings'] })
+    },
+  })
+}
+
+export function useCheckProxyExitIps() {
+  return useMutation({
+    mutationFn: checkProxyExitIps,
+  })
+}
+
+export function useExportKam() {
+  return useMutation({
+    mutationFn: (params?: { enabledOnly?: boolean; ids?: number[] }) => exportKam(params),
+  })
+}
+
+export function useCompactionConfig() {
+  return useQuery({
+    queryKey: ['compaction-config'],
+    queryFn: getCompactionConfig,
+  })
+}
+
+export function useSetCompactionConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (config: CompactionConfig) => setCompactionConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compaction-config'] })
+    },
   })
 }
 

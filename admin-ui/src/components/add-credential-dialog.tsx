@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -10,7 +11,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAddCredential } from '@/hooks/use-credentials'
+import {
+  cancelKiroSsoLogin,
+  completeIamSsoLogin,
+  importSsoToken,
+  pollBuilderIdLogin,
+  pollKiroSsoLogin,
+  startBuilderIdLogin,
+  startIamSsoLogin,
+  startKiroSsoLogin,
+} from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
+import type { BuilderIdStartResponse, IamSsoStartResponse, KiroSsoStartResponse } from '@/types/api'
 
 interface AddCredentialDialogProps {
   open: boolean
@@ -18,8 +30,10 @@ interface AddCredentialDialogProps {
 }
 
 type AuthMethod = 'social' | 'idc' | 'external_idp'
+type EntryMode = 'manual' | 'builder_id' | 'iam_sso' | 'kiro_sso' | 'sso_token'
 
 export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogProps) {
+  const [entryMode, setEntryMode] = useState<EntryMode>('manual')
   const [refreshToken, setRefreshToken] = useState('')
   const [authMethod, setAuthMethod] = useState<AuthMethod>('social')
   const [authRegion, setAuthRegion] = useState('')
@@ -34,10 +48,20 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyUsername, setProxyUsername] = useState('')
   const [proxyPassword, setProxyPassword] = useState('')
+  const [authFlowRegion, setAuthFlowRegion] = useState('')
+  const [flowPending, setFlowPending] = useState(false)
+  const [builderSession, setBuilderSession] = useState<BuilderIdStartResponse | null>(null)
+  const [iamStartUrl, setIamStartUrl] = useState('')
+  const [iamSession, setIamSession] = useState<IamSsoStartResponse | null>(null)
+  const [iamCallbackUrl, setIamCallbackUrl] = useState('')
+  const [kiroSession, setKiroSession] = useState<KiroSsoStartResponse | null>(null)
+  const [ssoBearerToken, setSsoBearerToken] = useState('')
 
   const { mutate, isPending } = useAddCredential()
+  const queryClient = useQueryClient()
 
   const resetForm = () => {
+    setEntryMode('manual')
     setRefreshToken('')
     setAuthMethod('social')
     setAuthRegion('')
@@ -52,10 +76,22 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
     setProxyUrl('')
     setProxyUsername('')
     setProxyPassword('')
+    setAuthFlowRegion('')
+    setFlowPending(false)
+    setBuilderSession(null)
+    setIamStartUrl('')
+    setIamSession(null)
+    setIamCallbackUrl('')
+    setKiroSession(null)
+    setSsoBearerToken('')
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (entryMode !== 'manual') {
+      return
+    }
 
     // 验证必填字段
     if (!refreshToken.trim()) {
@@ -104,6 +140,143 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
     )
   }
 
+  const finishAuthFlow = (message: string) => {
+    queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    toast.success(message)
+    onOpenChange(false)
+    resetForm()
+  }
+
+  const handleStartBuilderId = async () => {
+    setFlowPending(true)
+    try {
+      const session = await startBuilderIdLogin(authFlowRegion.trim() || undefined)
+      setBuilderSession(session)
+      toast.success('Builder ID 登录已启动')
+    } catch (error) {
+      toast.error(`启动失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handlePollBuilderId = async () => {
+    if (!builderSession) return
+    setFlowPending(true)
+    try {
+      const result = await pollBuilderIdLogin(builderSession.sessionId)
+      if (result.completed && result.account) {
+        finishAuthFlow(result.account.message)
+      } else {
+        toast.info(result.status || '等待授权完成')
+      }
+    } catch (error) {
+      toast.error(`轮询失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handleStartIamSso = async () => {
+    if (!iamStartUrl.trim()) {
+      toast.error('请输入 Start URL')
+      return
+    }
+    setFlowPending(true)
+    try {
+      const session = await startIamSsoLogin(iamStartUrl.trim(), authFlowRegion.trim() || undefined)
+      setIamSession(session)
+      toast.success('IAM SSO 登录已启动')
+    } catch (error) {
+      toast.error(`启动失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handleCompleteIamSso = async () => {
+    if (!iamSession || !iamCallbackUrl.trim()) {
+      toast.error('请输入回调 URL')
+      return
+    }
+    setFlowPending(true)
+    try {
+      const result = await completeIamSsoLogin(iamSession.sessionId, iamCallbackUrl.trim())
+      finishAuthFlow(result.message)
+    } catch (error) {
+      toast.error(`完成失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handleStartKiroSso = async () => {
+    setFlowPending(true)
+    try {
+      const session = await startKiroSsoLogin(authFlowRegion.trim() || undefined)
+      setKiroSession(session)
+      toast.success('Kiro SSO 登录已启动')
+    } catch (error) {
+      toast.error(`启动失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handlePollKiroSso = async () => {
+    if (!kiroSession) return
+    setFlowPending(true)
+    try {
+      const result = await pollKiroSsoLogin(kiroSession.sessionId)
+      if (result.completed && result.account) {
+        finishAuthFlow(result.account.message)
+      } else {
+        toast.info(result.status || '等待授权完成')
+      }
+    } catch (error) {
+      toast.error(`轮询失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handleCancelKiroSso = async () => {
+    if (!kiroSession) return
+    setFlowPending(true)
+    try {
+      const result = await cancelKiroSsoLogin(kiroSession.sessionId)
+      toast.success(result.message)
+      setKiroSession(null)
+    } catch (error) {
+      toast.error(`取消失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
+  const handleImportSsoToken = async () => {
+    if (!ssoBearerToken.trim()) {
+      toast.error('请输入 SSO Token')
+      return
+    }
+    setFlowPending(true)
+    try {
+      const result = await importSsoToken(ssoBearerToken.trim(), authFlowRegion.trim() || undefined)
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      if (result.errors.length > 0) {
+        toast.warning(`导入完成：成功 ${result.accounts.length} 个，失败 ${result.errors.length} 个`)
+      } else {
+        toast.success(`成功导入 ${result.accounts.length} 个账号`)
+      }
+      onOpenChange(false)
+      resetForm()
+    } catch (error) {
+      toast.error(`导入失败: ${extractErrorMessage(error)}`)
+    } finally {
+      setFlowPending(false)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
@@ -113,6 +286,39 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
 
         <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
           <div className="space-y-4 py-4 overflow-y-auto flex-1 pr-1">
+            <div className="space-y-2">
+              <label htmlFor="entryMode" className="text-sm font-medium">
+                添加方式
+              </label>
+              <select
+                id="entryMode"
+                value={entryMode}
+                onChange={(e) => setEntryMode(e.target.value as EntryMode)}
+                disabled={isPending || flowPending}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="manual">手动 Refresh Token</option>
+                <option value="builder_id">Builder ID Device Code</option>
+                <option value="iam_sso">IAM Identity Center SSO</option>
+                <option value="kiro_sso">Kiro SSO</option>
+                <option value="sso_token">SSO Token 导入</option>
+              </select>
+            </div>
+
+            {entryMode !== 'manual' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Region</label>
+                <Input
+                  placeholder="留空使用默认 Region"
+                  value={authFlowRegion}
+                  onChange={(e) => setAuthFlowRegion(e.target.value)}
+                  disabled={flowPending}
+                />
+              </div>
+            )}
+
+            {entryMode === 'manual' && (
+              <>
             {/* Refresh Token */}
             <div className="space-y-2">
               <label htmlFor="refreshToken" className="text-sm font-medium">
@@ -325,6 +531,99 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
                 留空使用全局代理。输入 "direct" 可显式不使用代理
               </p>
             </div>
+              </>
+            )}
+
+            {entryMode === 'builder_id' && (
+              <div className="space-y-4 border-[2.5px] border-border rounded-sm p-3">
+                <div className="flex gap-2">
+                  <Button type="button" onClick={handleStartBuilderId} disabled={flowPending}>
+                    启动登录
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handlePollBuilderId} disabled={flowPending || !builderSession}>
+                    检查授权
+                  </Button>
+                </div>
+                {builderSession && (
+                  <div className="space-y-2 text-sm">
+                    <div>验证码：<span className="font-mono font-bold">{builderSession.userCode}</span></div>
+                    <a href={builderSession.verificationUri} target="_blank" rel="noreferrer" className="text-primary underline">
+                      {builderSession.verificationUri}
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {entryMode === 'iam_sso' && (
+              <div className="space-y-4 border-[2.5px] border-border rounded-sm p-3">
+                <Input
+                  placeholder="Start URL"
+                  value={iamStartUrl}
+                  onChange={(e) => setIamStartUrl(e.target.value)}
+                  disabled={flowPending}
+                />
+                <div className="flex gap-2">
+                  <Button type="button" onClick={handleStartIamSso} disabled={flowPending}>
+                    启动登录
+                  </Button>
+                </div>
+                {iamSession && (
+                  <div className="space-y-3">
+                    <a href={iamSession.authorizeUrl} target="_blank" rel="noreferrer" className="break-all text-sm text-primary underline">
+                      {iamSession.authorizeUrl}
+                    </a>
+                    <Input
+                      placeholder="粘贴授权后的完整回调 URL"
+                      value={iamCallbackUrl}
+                      onChange={(e) => setIamCallbackUrl(e.target.value)}
+                      disabled={flowPending}
+                    />
+                    <Button type="button" onClick={handleCompleteIamSso} disabled={flowPending}>
+                      完成导入
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {entryMode === 'kiro_sso' && (
+              <div className="space-y-4 border-[2.5px] border-border rounded-sm p-3">
+                <div className="flex gap-2">
+                  <Button type="button" onClick={handleStartKiroSso} disabled={flowPending}>
+                    启动登录
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handlePollKiroSso} disabled={flowPending || !kiroSession}>
+                    检查授权
+                  </Button>
+                  {kiroSession && (
+                    <Button type="button" variant="ghost" onClick={handleCancelKiroSso} disabled={flowPending}>
+                      取消
+                    </Button>
+                  )}
+                </div>
+                {kiroSession && (
+                  <a href={kiroSession.signInUrl} target="_blank" rel="noreferrer" className="break-all text-sm text-primary underline">
+                    {kiroSession.signInUrl}
+                  </a>
+                )}
+              </div>
+            )}
+
+            {entryMode === 'sso_token' && (
+              <div className="space-y-4 border-[2.5px] border-border rounded-sm p-3">
+                <textarea
+                  className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  placeholder="粘贴 Bearer Token"
+                  value={ssoBearerToken}
+                  onChange={(e) => setSsoBearerToken(e.target.value)}
+                  disabled={flowPending}
+                />
+                <Button type="button" onClick={handleImportSsoToken} disabled={flowPending}>
+                  导入 Token
+                </Button>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
@@ -336,9 +635,11 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
             >
               取消
             </Button>
-            <Button type="submit" disabled={isPending}>
-              {isPending ? '添加中...' : '添加'}
-            </Button>
+            {entryMode === 'manual' && (
+              <Button type="submit" disabled={isPending}>
+                {isPending ? '添加中...' : '添加'}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

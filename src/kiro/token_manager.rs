@@ -545,7 +545,11 @@ fn profile_region_candidates(credentials: &KiroCredentials, config: &Config) -> 
 
 fn list_available_profiles_endpoint(region: &str) -> (String, String) {
     let region = region.trim();
-    let region = if region.is_empty() { "us-east-1" } else { region };
+    let region = if region.is_empty() {
+        "us-east-1"
+    } else {
+        region
+    };
     let host = format!("q.{}.amazonaws.com", region);
     (format!("https://{}/", host), host)
 }
@@ -750,6 +754,111 @@ pub(crate) async fn get_usage_limits(
     Ok(data)
 }
 
+fn rest_api_region_candidates(sso_region: &str) -> Vec<String> {
+    let primary = if sso_region.trim().is_empty() {
+        "us-east-1"
+    } else {
+        sso_region.trim()
+    };
+    let mut regions = vec![primary.to_string()];
+    for fallback in ["us-east-1", "eu-central-1"] {
+        if !regions.iter().any(|region| region == fallback) {
+            regions.push(fallback.to_string());
+        }
+    }
+    regions
+}
+
+/// 设置用户偏好（用于开启/关闭 overage）。
+pub(crate) async fn set_user_preference(
+    credentials: &KiroCredentials,
+    config: &Config,
+    token: &str,
+    proxy: Option<&ProxyConfig>,
+    overage_status: &str,
+) -> anyhow::Result<()> {
+    if overage_status != "ENABLED" && overage_status != "DISABLED" {
+        anyhow::bail!("overageStatus 必须是 ENABLED 或 DISABLED");
+    }
+
+    let machine_id = machine_id::generate_from_credentials(credentials, config)
+        .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
+    let kiro_version = &config.kiro_version;
+    let user_agent = format!(
+        "aws-sdk-js/1.0.0 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererruntime#1.0.0 m/N,E KiroIDE-{}-{}",
+        config.system_version, config.node_version, kiro_version, machine_id
+    );
+    let amz_user_agent = format!(
+        "{} KiroIDE-{}-{}",
+        USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
+    );
+
+    let client = build_client(proxy, 60, config.tls_backend)?;
+    let body = if let Some(profile_arn) = credentials.profile_arn.as_deref() {
+        serde_json::json!({
+            "overageConfiguration": { "overageStatus": overage_status },
+            "profileArn": profile_arn,
+        })
+    } else {
+        serde_json::json!({
+            "overageConfiguration": { "overageStatus": overage_status },
+        })
+    };
+
+    let mut last_error = None;
+    for (idx, region) in rest_api_region_candidates(credentials.effective_auth_region(config))
+        .iter()
+        .enumerate()
+    {
+        let host = format!("q.{}.amazonaws.com", region);
+        let url = format!("https://{}/setUserPreference", host);
+        let mut request = client
+            .post(&url)
+            .header("x-amz-user-agent", &amz_user_agent)
+            .header("User-Agent", &user_agent)
+            .header("host", &host)
+            .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
+            .header("amz-sdk-request", "attempt=1; max=1")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("content-type", "application/json")
+            .header("Connection", "close")
+            .json(&body);
+
+        if credentials.is_external_idp() {
+            request = request.header("TokenType", "EXTERNAL_IDP");
+        }
+
+        let response = request.send().await?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+
+        let body_text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 403
+            && idx + 1 < rest_api_region_candidates(credentials.effective_auth_region(config)).len()
+        {
+            last_error = Some(format!("{} {}", status, body_text));
+            continue;
+        }
+
+        let error_msg = match status.as_u16() {
+            400 => "请求参数错误，账号可能不支持超额",
+            401 => "认证失败，Token 无效或已过期",
+            403 => "权限不足，无法设置用户偏好",
+            429 => "请求过于频繁，已被限流",
+            500..=599 => "服务器错误，AWS 服务暂时不可用",
+            _ => "设置用户偏好失败",
+        };
+        bail!("{}: {} {}", error_msg, status, body_text);
+    }
+
+    bail!(
+        "权限不足，无法设置用户偏好: {}",
+        last_error.unwrap_or_else(|| "无可用端点".to_string())
+    )
+}
+
 // ============================================================================
 // 多凭据 Token 管理器
 // ============================================================================
@@ -825,6 +934,24 @@ pub struct CredentialEntrySnapshot {
     /// 代理 URL（用于前端展示）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// 账号来源分类
+    pub account_source: Option<String>,
+    /// 账号来源展示标签
+    pub account_source_label: Option<String>,
+    /// KAM 顶层 idp 原始值
+    pub kam_idp: Option<String>,
+    /// KAM credentials.provider 原始值
+    pub kam_provider: Option<String>,
+    /// KAM 分组 ID
+    pub kam_group_id: Option<String>,
+    /// KAM 分组名称
+    pub kam_group_name: Option<String>,
+    /// KAM / 手动标签
+    pub labels: Vec<String>,
+    /// 最近一次显式 Token 刷新时间
+    pub last_token_refresh_at: Option<String>,
+    /// 最近一次存活检测时间
+    pub last_liveness_check_at: Option<String>,
 }
 
 /// 凭据管理器状态快照
@@ -1450,7 +1577,10 @@ impl MultiTokenManager {
         if let Err(e) = write_result {
             let detail = format!(
                 "回写凭据文件失败: path={:?}, credentials_count={}, json_bytes={}, os_error={:?}",
-                path, credentials.len(), json.len(), e
+                path,
+                credentials.len(),
+                json.len(),
+                e
             );
             tracing::error!("{}", detail);
             anyhow::bail!(detail);
@@ -1771,6 +1901,15 @@ impl MultiTokenManager {
                     last_used_at: e.last_used_at.clone(),
                     has_proxy: e.credentials.proxy_url.is_some(),
                     proxy_url: e.credentials.proxy_url.clone(),
+                    account_source: e.credentials.account_source.clone(),
+                    account_source_label: e.credentials.account_source_label.clone(),
+                    kam_idp: e.credentials.kam_idp.clone(),
+                    kam_provider: e.credentials.kam_provider.clone(),
+                    kam_group_id: e.credentials.kam_group_id.clone(),
+                    kam_group_name: e.credentials.kam_group_name.clone(),
+                    labels: e.credentials.labels.clone(),
+                    last_token_refresh_at: e.credentials.last_token_refresh_at.clone(),
+                    last_liveness_check_at: e.credentials.last_liveness_check_at.clone(),
                 })
                 .collect(),
             current_id,
@@ -1846,6 +1985,71 @@ impl MultiTokenManager {
         self.emit_event(
             CredentialEvent::new(CredentialEventType::ManualEnabled, id)
                 .with_reason("重置失败计数并重新启用"),
+        );
+        Ok(())
+    }
+
+    /// 强制刷新指定凭据的 Token（Admin API）。
+    pub async fn force_refresh_token(&self, id: u64) -> anyhow::Result<()> {
+        let _guard = self.refresh_lock.lock().await;
+        let credentials = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.credentials.clone())
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+        };
+
+        let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
+        let mut new_creds =
+            match refresh_token(&credentials, &self.config, effective_proxy.as_ref()).await {
+                Ok(creds) => {
+                    if is_token_expired(&creds) {
+                        let err = anyhow::anyhow!("强制刷新后的 Token 仍然无效或已过期");
+                        self.emit_event(
+                            CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                                .with_reason(format!("{}", err)),
+                        );
+                        return Err(err);
+                    }
+                    creds
+                }
+                Err(e) => {
+                    self.emit_event(
+                        CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                            .with_reason(format!("{}", e)),
+                    );
+                    return Err(e);
+                }
+            };
+        new_creds.last_token_refresh_at = Some(Utc::now().to_rfc3339());
+
+        {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                new_creds.account_source = entry.credentials.account_source.clone();
+                new_creds.account_source_label = entry.credentials.account_source_label.clone();
+                new_creds.kam_idp = entry.credentials.kam_idp.clone();
+                new_creds.kam_provider = entry.credentials.kam_provider.clone();
+                new_creds.kam_group_id = entry.credentials.kam_group_id.clone();
+                new_creds.kam_group_name = entry.credentials.kam_group_name.clone();
+                new_creds.labels = entry.credentials.labels.clone();
+                new_creds.proxy_url = entry.credentials.proxy_url.clone();
+                new_creds.proxy_username = entry.credentials.proxy_username.clone();
+                new_creds.proxy_password = entry.credentials.proxy_password.clone();
+                entry.credentials = new_creds;
+                entry.failure_count = 0;
+            }
+        }
+
+        if let Err(e) = self.persist_credentials() {
+            tracing::warn!("强制刷新 Token 后持久化失败: {}", e);
+        }
+
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, id)
+                .with_reason("管理员强制刷新 Token"),
         );
         Ok(())
     }
@@ -1933,7 +2137,8 @@ impl MultiTokenManager {
             .await?;
 
         let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
-        let usage_limits = get_usage_limits(&credentials, &self.config, &token, effective_proxy.as_ref()).await?;
+        let usage_limits =
+            get_usage_limits(&credentials, &self.config, &token, effective_proxy.as_ref()).await?;
 
         // 更新订阅等级到凭据（仅在发生变化时持久化）
         if let Some(subscription_title) = usage_limits.subscription_title() {
@@ -1942,8 +2147,7 @@ impl MultiTokenManager {
                 if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
                     let old_title = entry.credentials.subscription_title.clone();
                     if old_title.as_deref() != Some(subscription_title) {
-                        entry.credentials.subscription_title =
-                            Some(subscription_title.to_string());
+                        entry.credentials.subscription_title = Some(subscription_title.to_string());
                         tracing::info!(
                             "凭据 #{} 订阅等级已更新: {:?} -> {}",
                             id,
@@ -1967,6 +2171,98 @@ impl MultiTokenManager {
         }
 
         Ok(usage_limits)
+    }
+
+    /// 设置用户偏好（开启/关闭超额）— Admin API。
+    pub async fn set_user_preference_for(
+        &self,
+        id: u64,
+        overage_status: &str,
+    ) -> anyhow::Result<()> {
+        if overage_status != "ENABLED" && overage_status != "DISABLED" {
+            anyhow::bail!("overageStatus 必须是 ENABLED 或 DISABLED");
+        }
+
+        let credentials = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.credentials.clone())
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+        };
+
+        let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
+        let token = if needs_refresh {
+            let _guard = self.refresh_lock.lock().await;
+            let current_creds = {
+                let entries = self.entries.lock();
+                entries
+                    .iter()
+                    .find(|e| e.id == id)
+                    .map(|e| e.credentials.clone())
+                    .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+            };
+
+            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
+                let effective_proxy = current_creds.effective_proxy(self.proxy.as_ref());
+                let new_creds =
+                    refresh_token(&current_creds, &self.config, effective_proxy.as_ref()).await?;
+                {
+                    let mut entries = self.entries.lock();
+                    if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                        entry.credentials.access_token = new_creds.access_token.clone();
+                        entry.credentials.refresh_token = new_creds.refresh_token.clone();
+                        entry.credentials.expires_at = new_creds.expires_at.clone();
+                        if let Some(profile_arn) = new_creds.profile_arn {
+                            entry.credentials.profile_arn = Some(profile_arn);
+                        }
+                    }
+                }
+                if let Err(e) = self.persist_credentials() {
+                    tracing::warn!("Token 刷新后持久化失败（不影响本次请求）: {}", e);
+                }
+                new_creds
+                    .access_token
+                    .ok_or_else(|| anyhow::anyhow!("刷新后无 access_token"))?
+            } else {
+                current_creds
+                    .access_token
+                    .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
+            }
+        } else {
+            credentials
+                .access_token
+                .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
+        };
+
+        let credentials = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.credentials.clone())
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+        };
+        let credentials = self
+            .ensure_external_idp_profile_arn(id, credentials, &token)
+            .await?;
+
+        let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
+        set_user_preference(
+            &credentials,
+            &self.config,
+            &token,
+            effective_proxy.as_ref(),
+            overage_status,
+        )
+        .await?;
+
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::ApiSuccess, id)
+                .with_reason(format!("设置 overageStatus={}", overage_status)),
+        );
+        Ok(())
     }
 
     /// 添加新凭据（Admin API）
@@ -2047,6 +2343,14 @@ impl MultiTokenManager {
         validated_cred.api_region = new_cred.api_region;
         validated_cred.machine_id = new_cred.machine_id;
         validated_cred.email = new_cred.email;
+        validated_cred.account_source = new_cred.account_source;
+        validated_cred.account_source_label = new_cred.account_source_label;
+        validated_cred.kam_idp = new_cred.kam_idp;
+        validated_cred.kam_provider = new_cred.kam_provider;
+        validated_cred.kam_group_id = new_cred.kam_group_id;
+        validated_cred.kam_group_name = new_cred.kam_group_name;
+        validated_cred.labels = new_cred.labels;
+        validated_cred.last_token_refresh_at = Some(Utc::now().to_rfc3339());
         validated_cred.proxy_url = new_cred.proxy_url;
         validated_cred.proxy_username = new_cred.proxy_username;
         validated_cred.proxy_password = new_cred.proxy_password;
@@ -2072,9 +2376,11 @@ impl MultiTokenManager {
 
         // 7. 持久化（失败不阻塞，凭据已在内存中生效）
         match self.persist_credentials() {
-            Ok(true) => tracing::info!("凭据 #{} 已持久化到文件（共 {} 个凭据）", new_id, {
-                self.entries.lock().len()
-            }),
+            Ok(true) => tracing::info!(
+                "凭据 #{} 已持久化到文件（共 {} 个凭据）",
+                new_id,
+                { self.entries.lock().len() }
+            ),
             Ok(false) => tracing::warn!("凭据 #{} 未持久化（非多凭据格式或路径未设置）", new_id),
             Err(e) => tracing::error!("凭据 #{} 持久化失败: {}", new_id, e),
         }
@@ -2147,10 +2453,25 @@ impl MultiTokenManager {
                     };
                 }
                 if let Some(ref ar) = update.auth_region {
-                    cred.auth_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+                    cred.auth_region = if ar.is_empty() {
+                        None
+                    } else {
+                        Some(ar.clone())
+                    };
                 }
                 if let Some(ref ar) = update.api_region {
-                    cred.api_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+                    cred.api_region = if ar.is_empty() {
+                        None
+                    } else {
+                        Some(ar.clone())
+                    };
+                }
+                if let Some(ref email) = update.email {
+                    cred.email = if email.is_empty() {
+                        None
+                    } else {
+                        Some(email.clone())
+                    };
                 }
                 cred
             };
@@ -2209,21 +2530,31 @@ impl MultiTokenManager {
         update: &crate::admin::types::UpdateCredentialRequest,
     ) {
         if let Some(ref am) = update.auth_method {
-            cred.auth_method = Some(if am.eq_ignore_ascii_case("builder-id") || am.eq_ignore_ascii_case("iam") {
-                "idc".to_string()
-            } else if am.eq_ignore_ascii_case("external-idp")
-                || am.eq_ignore_ascii_case("externalidp")
-            {
-                "external_idp".to_string()
-            } else {
-                am.clone()
-            });
+            cred.auth_method = Some(
+                if am.eq_ignore_ascii_case("builder-id") || am.eq_ignore_ascii_case("iam") {
+                    "idc".to_string()
+                } else if am.eq_ignore_ascii_case("external-idp")
+                    || am.eq_ignore_ascii_case("externalidp")
+                {
+                    "external_idp".to_string()
+                } else {
+                    am.clone()
+                },
+            );
         }
         if let Some(ref ci) = update.client_id {
-            cred.client_id = if ci.is_empty() { None } else { Some(ci.clone()) };
+            cred.client_id = if ci.is_empty() {
+                None
+            } else {
+                Some(ci.clone())
+            };
         }
         if let Some(ref cs) = update.client_secret {
-            cred.client_secret = if cs.is_empty() { None } else { Some(cs.clone()) };
+            cred.client_secret = if cs.is_empty() {
+                None
+            } else {
+                Some(cs.clone())
+            };
         }
         if let Some(ref endpoint) = update.token_endpoint {
             cred.token_endpoint = if endpoint.is_empty() {
@@ -2247,22 +2578,98 @@ impl MultiTokenManager {
             };
         }
         if let Some(ref ar) = update.auth_region {
-            cred.auth_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+            cred.auth_region = if ar.is_empty() {
+                None
+            } else {
+                Some(ar.clone())
+            };
         }
         if let Some(ref ar) = update.api_region {
-            cred.api_region = if ar.is_empty() { None } else { Some(ar.clone()) };
+            cred.api_region = if ar.is_empty() {
+                None
+            } else {
+                Some(ar.clone())
+            };
         }
         if let Some(ref mi) = update.machine_id {
-            cred.machine_id = if mi.is_empty() { None } else { Some(mi.clone()) };
+            cred.machine_id = if mi.is_empty() {
+                None
+            } else {
+                Some(mi.clone())
+            };
+        }
+        if let Some(ref email) = update.email {
+            cred.email = if email.is_empty() {
+                None
+            } else {
+                Some(email.clone())
+            };
+        }
+        if let Some(ref source) = update.account_source {
+            cred.account_source = if source.is_empty() {
+                None
+            } else {
+                Some(source.clone())
+            };
+        }
+        if let Some(ref label) = update.account_source_label {
+            cred.account_source_label = if label.is_empty() {
+                None
+            } else {
+                Some(label.clone())
+            };
+        }
+        if let Some(ref idp) = update.kam_idp {
+            cred.kam_idp = if idp.is_empty() {
+                None
+            } else {
+                Some(idp.clone())
+            };
+        }
+        if let Some(ref provider) = update.kam_provider {
+            cred.kam_provider = if provider.is_empty() {
+                None
+            } else {
+                Some(provider.clone())
+            };
+        }
+        if let Some(ref group_id) = update.kam_group_id {
+            cred.kam_group_id = if group_id.is_empty() {
+                None
+            } else {
+                Some(group_id.clone())
+            };
+        }
+        if let Some(ref group_name) = update.kam_group_name {
+            cred.kam_group_name = if group_name.is_empty() {
+                None
+            } else {
+                Some(group_name.clone())
+            };
+        }
+        if let Some(ref labels) = update.labels {
+            cred.labels = labels.clone();
         }
         if let Some(ref pu) = update.proxy_url {
-            cred.proxy_url = if pu.is_empty() { None } else { Some(pu.clone()) };
+            cred.proxy_url = if pu.is_empty() {
+                None
+            } else {
+                Some(pu.clone())
+            };
         }
         if let Some(ref pu) = update.proxy_username {
-            cred.proxy_username = if pu.is_empty() { None } else { Some(pu.clone()) };
+            cred.proxy_username = if pu.is_empty() {
+                None
+            } else {
+                Some(pu.clone())
+            };
         }
         if let Some(ref pp) = update.proxy_password {
-            cred.proxy_password = if pp.is_empty() { None } else { Some(pp.clone()) };
+            cred.proxy_password = if pp.is_empty() {
+                None
+            } else {
+                Some(pp.clone())
+            };
         }
     }
 
@@ -2327,6 +2734,83 @@ impl MultiTokenManager {
 
         tracing::info!("已删除凭据 #{}", id);
         Ok(())
+    }
+
+    /// 导出当前凭据快照。
+    pub fn export_credentials(&self) -> Vec<KiroCredentials> {
+        let entries = self.entries.lock();
+        entries.iter().map(|e| e.credentials.clone()).collect()
+    }
+
+    /// 写入凭据级代理配置。`None` 表示恢复全局代理策略，`direct=true` 表示强制直连。
+    pub fn set_proxy_for_credential(
+        &self,
+        id: u64,
+        proxy_url: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+        direct: bool,
+    ) -> anyhow::Result<()> {
+        {
+            let mut entries = self.entries.lock();
+            let entry = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            if direct {
+                entry.credentials.proxy_url = Some(KiroCredentials::PROXY_DIRECT.to_string());
+                entry.credentials.proxy_username = None;
+                entry.credentials.proxy_password = None;
+            } else {
+                entry.credentials.proxy_url = proxy_url;
+                entry.credentials.proxy_username = username;
+                entry.credentials.proxy_password = password;
+            }
+        }
+        self.persist_credentials()?;
+        self.emit_event(
+            CredentialEvent::new(CredentialEventType::ApiSuccess, id)
+                .with_reason("更新账号代理绑定"),
+        );
+        Ok(())
+    }
+
+    /// 清理绑定到指定代理 URL 的凭据代理设置。
+    pub fn clear_proxy_url_bindings(&self, proxy_url: &str) -> anyhow::Result<usize> {
+        let mut cleared = 0usize;
+        {
+            let mut entries = self.entries.lock();
+            for entry in entries.iter_mut() {
+                if entry.credentials.proxy_url.as_deref() == Some(proxy_url) {
+                    entry.credentials.proxy_url = None;
+                    entry.credentials.proxy_username = None;
+                    entry.credentials.proxy_password = None;
+                    cleared += 1;
+                }
+            }
+        }
+        if cleared > 0 {
+            self.persist_credentials()?;
+        }
+        Ok(cleared)
+    }
+
+    /// 记录一次存活检测时间。
+    pub fn mark_liveness_checked(&self, id: u64) -> anyhow::Result<()> {
+        {
+            let mut entries = self.entries.lock();
+            let entry = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            entry.credentials.last_liveness_check_at = Some(Utc::now().to_rfc3339());
+        }
+        self.persist_credentials()?;
+        Ok(())
+    }
+
+    pub fn global_proxy(&self) -> Option<ProxyConfig> {
+        self.proxy.clone()
     }
 
     /// 获取负载均衡模式（Admin API）
@@ -2401,7 +2885,10 @@ impl MultiTokenManager {
             anyhow::bail!("缓存读取比例必须在 0.0~1.0 之间，当前值: {}", read_ratio);
         }
         if creation_ratio < 0.0 || creation_ratio > 1.0 {
-            anyhow::bail!("缓存写入比例必须在 0.0~1.0 之间，当前值: {}", creation_ratio);
+            anyhow::bail!(
+                "缓存写入比例必须在 0.0~1.0 之间，当前值: {}",
+                creation_ratio
+            );
         }
         if read_ratio + creation_ratio > 1.0 {
             anyhow::bail!(
@@ -2416,7 +2903,8 @@ impl MultiTokenManager {
         *self.cache_read_ratio.lock() = read_ratio;
         *self.cache_creation_ratio.lock() = creation_ratio;
 
-        if let Err(err) = self.persist_cache_simulation_config(enabled, read_ratio, creation_ratio) {
+        if let Err(err) = self.persist_cache_simulation_config(enabled, read_ratio, creation_ratio)
+        {
             tracing::warn!("缓存模拟配置持久化失败，仅当前进程生效: {}", err);
         }
 
@@ -2682,21 +3170,14 @@ mod tests {
 
     #[test]
     fn test_set_load_balancing_mode_persists_to_config_file() {
-        let config_path = std::env::temp_dir().join(format!(
-            "kiro-load-balancing-{}.json",
-            uuid::Uuid::new_v4()
-        ));
+        let config_path =
+            std::env::temp_dir().join(format!("kiro-load-balancing-{}.json", uuid::Uuid::new_v4()));
         std::fs::write(&config_path, r#"{"loadBalancingMode":"priority"}"#).unwrap();
 
         let config = Config::load(&config_path).unwrap();
-        let manager = MultiTokenManager::new(
-            config,
-            vec![KiroCredentials::default()],
-            None,
-            None,
-            false,
-        )
-        .unwrap();
+        let manager =
+            MultiTokenManager::new(config, vec![KiroCredentials::default()], None, None, false)
+                .unwrap();
 
         manager
             .set_load_balancing_mode("balanced".to_string())
@@ -2770,7 +3251,12 @@ mod tests {
         manager.report_quota_exhausted(2);
         assert_eq!(manager.available_count(), 0);
 
-        let err = manager.acquire_context(None).await.err().unwrap().to_string();
+        let err = manager
+            .acquire_context(None)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
         assert!(
             err.contains("所有凭据均已禁用"),
             "错误应提示所有凭据禁用，实际: {}",

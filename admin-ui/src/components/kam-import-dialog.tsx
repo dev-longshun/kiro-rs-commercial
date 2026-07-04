@@ -48,6 +48,16 @@ interface KamAccount {
   profileArn?: string
   profile_arn?: string
   machineId?: string
+  groupId?: string
+  group_id?: string
+  groupName?: string
+  group_name?: string
+  labels?: string[]
+  tags?: string[]
+  accountSource?: string
+  account_source?: string
+  accountSourceLabel?: string
+  account_source_label?: string
   status?: string
 }
 
@@ -89,6 +99,11 @@ function textIncludesAny(value: string | undefined, keywords: string[]): boolean
   if (!value) return false
   const lower = value.toLowerCase()
   return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
+}
+
+function normalizeKamLabels(account: KamAccount): string[] {
+  const labels = [...(account.labels || []), ...(account.tags || [])]
+  return Array.from(new Set(labels.map(label => label.trim()).filter(Boolean)))
 }
 
 function isExternalIdpBalanceSoftError(authMethod: string, error: unknown): boolean {
@@ -377,6 +392,13 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
               : undefined,
             machineId: account.machineId?.trim() || undefined,
             email: firstNonEmptyString(account.email, account.nickname),
+            accountSource: firstNonEmptyString(account.accountSource, account.account_source) || 'kam',
+            accountSourceLabel: firstNonEmptyString(account.accountSourceLabel, account.account_source_label) || 'KAM',
+            kamIdp: account.idp?.trim() || undefined,
+            kamProvider: provider?.trim() || undefined,
+            kamGroupId: firstNonEmptyString(account.groupId, account.group_id),
+            kamGroupName: firstNonEmptyString(account.groupName, account.group_name),
+            labels: normalizeKamLabels(account),
           })
 
           addedCredId = addedCred.credentialId

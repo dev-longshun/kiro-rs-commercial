@@ -9,12 +9,11 @@ use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
-    Json as JsonExtractor,
+    Extension, Json as JsonExtractor,
     body::Body,
     extract::State,
     http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
-    Extension,
 };
 use bytes::Bytes;
 use futures::{Stream, StreamExt, stream};
@@ -28,7 +27,7 @@ use crate::kiro::parser::decoder::EventStreamDecoder;
 use crate::token;
 
 use super::converter::{ConversionError, convert_request};
-use super::middleware::{AppState, ApiKeyContext};
+use super::middleware::{ApiKeyContext, AppState};
 use super::types::{Message, MessagesRequest, SystemMessage};
 
 // ==================== OpenAI 请求类型 ====================
@@ -157,24 +156,20 @@ fn convert_to_anthropic_request(req: ChatCompletionRequest) -> MessagesRequest {
     for msg in req.messages {
         let content_text = match msg.content {
             ChatMessageContent::Text(text) => text,
-            ChatMessageContent::Parts(parts) => {
-                parts
-                    .into_iter()
-                    .filter_map(|p| match p {
-                        ChatContentPart::Text { text } => Some(text),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            ChatMessageContent::Parts(parts) => parts
+                .into_iter()
+                .filter_map(|p| match p {
+                    ChatContentPart::Text { text } => Some(text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
         };
 
         match msg.role.as_str() {
             "system" => {
                 let sys_msgs = system.get_or_insert_with(Vec::new);
-                sys_msgs.push(SystemMessage {
-                    text: content_text,
-                });
+                sys_msgs.push(SystemMessage { text: content_text });
             }
             "user" => {
                 messages.push(Message {
@@ -206,10 +201,7 @@ fn convert_to_anthropic_request(req: ChatCompletionRequest) -> MessagesRequest {
         });
     }
 
-    let max_tokens = req
-        .max_completion_tokens
-        .or(req.max_tokens)
-        .unwrap_or(4096);
+    let max_tokens = req.max_completion_tokens.or(req.max_tokens).unwrap_or(4096);
 
     MessagesRequest {
         model: req.model,
@@ -409,9 +401,7 @@ async fn handle_non_stream(
                             stop_reason = "model_context_window_exceeded".to_string();
                         }
                     }
-                    Event::Exception {
-                        exception_type, ..
-                    } => {
+                    Event::Exception { exception_type, .. } => {
                         if exception_type == "ContentLengthExceededException" {
                             stop_reason = "max_tokens".to_string();
                         }
@@ -425,12 +415,7 @@ async fn handle_non_stream(
     let reported_output_tokens = output_tokens.min(380);
 
     if let (Some(tracker), Some(key_id)) = (&usage_tracker, api_key_id) {
-        tracker.record(
-            key_id,
-            model.to_string(),
-            input_tokens,
-            output_tokens,
-        );
+        tracker.record(key_id, model.to_string(), input_tokens, output_tokens);
     }
 
     let response_body = ChatCompletionResponse {
@@ -577,15 +562,12 @@ fn create_openai_stream(
                                     Event::AssistantResponse(resp) => {
                                         if !resp.content.is_empty() {
                                             // 过滤 thinking 标签
-                                            let content =
-                                                strip_thinking_tags(&resp.content);
+                                            let content = strip_thinking_tags(&resp.content);
                                             if !content.is_empty() {
-                                                output_tokens +=
-                                                    (content.len() as i32 + 3) / 4;
+                                                output_tokens += (content.len() as i32 + 3) / 4;
                                                 let chunk = ChatCompletionChunk {
                                                     id: completion_id.clone(),
-                                                    object: "chat.completion.chunk"
-                                                        .to_string(),
+                                                    object: "chat.completion.chunk".to_string(),
                                                     created,
                                                     model: model.clone(),
                                                     choices: vec![ChunkChoice {
@@ -602,24 +584,18 @@ fn create_openai_stream(
                                                     serde_json::to_string(&chunk)
                                                         .unwrap_or_default()
                                                 );
-                                                bytes_out
-                                                    .push(Ok(Bytes::from(data)));
+                                                bytes_out.push(Ok(Bytes::from(data)));
                                             }
                                         }
                                     }
                                     Event::ContextUsage(ctx) => {
                                         if ctx.context_usage_percentage >= 100.0 {
                                             stop_reason =
-                                                "model_context_window_exceeded"
-                                                    .to_string();
+                                                "model_context_window_exceeded".to_string();
                                         }
                                     }
-                                    Event::Exception {
-                                        exception_type, ..
-                                    } => {
-                                        if exception_type
-                                            == "ContentLengthExceededException"
-                                        {
+                                    Event::Exception { exception_type, .. } => {
+                                        if exception_type == "ContentLengthExceededException" {
                                             stop_reason = "max_tokens".to_string();
                                         }
                                     }
@@ -649,22 +625,11 @@ fn create_openai_stream(
                 Some(Err(e)) => {
                     tracing::error!("读取响应流失败: {}", e);
                     // 发送结束事件
-                    let final_bytes = generate_final_chunks(
-                        &completion_id,
-                        created,
-                        &model,
-                        &stop_reason,
-                    );
+                    let final_bytes =
+                        generate_final_chunks(&completion_id, created, &model, &stop_reason);
 
-                    if let (Some(tracker), Some(key_id)) =
-                        (&usage_tracker, api_key_id)
-                    {
-                        tracker.record(
-                            key_id,
-                            model.clone(),
-                            input_tokens,
-                            output_tokens,
-                        );
+                    if let (Some(tracker), Some(key_id)) = (&usage_tracker, api_key_id) {
+                        tracker.record(key_id, model.clone(), input_tokens, output_tokens);
                     }
 
                     Some((
@@ -686,22 +651,11 @@ fn create_openai_stream(
                 }
                 None => {
                     // 流结束
-                    let final_bytes = generate_final_chunks(
-                        &completion_id,
-                        created,
-                        &model,
-                        &stop_reason,
-                    );
+                    let final_bytes =
+                        generate_final_chunks(&completion_id, created, &model, &stop_reason);
 
-                    if let (Some(tracker), Some(key_id)) =
-                        (&usage_tracker, api_key_id)
-                    {
-                        tracker.record(
-                            key_id,
-                            model.clone(),
-                            input_tokens,
-                            output_tokens,
-                        );
+                    if let (Some(tracker), Some(key_id)) = (&usage_tracker, api_key_id) {
+                        tracker.record(key_id, model.clone(), input_tokens, output_tokens);
                     }
 
                     Some((
@@ -936,10 +890,7 @@ mod tests {
     #[test]
     fn test_strip_thinking_tags_partial() {
         // 不完整的 thinking 标签（跨 chunk）
-        assert_eq!(
-            strip_thinking_tags("Hello <thinking>unfinished"),
-            "Hello "
-        );
+        assert_eq!(strip_thinking_tags("Hello <thinking>unfinished"), "Hello ");
     }
 
     #[test]

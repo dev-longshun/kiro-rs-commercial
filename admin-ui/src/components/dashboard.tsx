@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Settings, FileText } from 'lucide-react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Key, Settings, FileText, Network, Zap } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -7,15 +7,27 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { CredentialCard } from '@/components/credential-card'
+import { CredentialFilterBar, type CredentialViewMode } from '@/components/credential-filter-bar'
+import { CredentialTable } from '@/components/credential-table'
 import { BalanceDialog } from '@/components/balance-dialog'
 import { AddCredentialDialog } from '@/components/add-credential-dialog'
 import { BatchImportDialog } from '@/components/batch-import-dialog'
 import { KamImportDialog } from '@/components/kam-import-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ApiKeysPanel } from '@/components/api-keys-panel'
+import { ProxyPoolPanel } from '@/components/proxy-pool-panel'
 import { SettingsPanel } from '@/components/settings-panel'
 import { ErrorLogsPanel } from '@/components/error-logs-panel'
-import { useCredentials, useDeleteCredential, useResetFailure, useRpm } from '@/hooks/use-credentials'
+import {
+  useBalanceSummary,
+  useCredentials,
+  useDeleteCredential,
+  useEnableOverageAll,
+  useExportKam,
+  useRefreshAllBalances,
+  useResetFailure,
+  useRpm,
+} from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { BalanceResponse } from '@/types/api'
@@ -25,7 +37,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onLogout }: DashboardProps) {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'logs' | 'settings'>('credentials')
+  const [activeTab, setActiveTab] = useState<'credentials' | 'apikeys' | 'proxies' | 'logs' | 'settings'>('credentials')
   const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null)
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -45,6 +57,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const cancelVerifyRef = useRef(false)
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 12
+  const [viewMode, setViewMode] = useState<CredentialViewMode>(() => {
+    if (typeof window === 'undefined') return 'card'
+    return (localStorage.getItem('credentialViewMode') as CredentialViewMode | null) || 'card'
+  })
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [sourceFilter, setSourceFilter] = useState('all')
+  const [overageFilter, setOverageFilter] = useState('all')
+  const [proxyFilter, setProxyFilter] = useState('all')
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return document.documentElement.classList.contains('dark')
@@ -54,15 +75,59 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const queryClient = useQueryClient()
   const { data, isLoading, error, refetch } = useCredentials()
+  const { data: balanceSummary } = useBalanceSummary()
   const { data: rpmData } = useRpm()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
+  const enableOverageAll = useEnableOverageAll()
+  const refreshAllBalancesMutation = useRefreshAllBalances()
+  const exportKam = useExportKam()
+
+  const filteredCredentials = useMemo(() => {
+    const credentials = data?.credentials || []
+    const query = searchTerm.trim().toLowerCase()
+    return credentials.filter((credential) => {
+      const balance = balanceMap.get(credential.id)
+      const haystack = [
+        String(credential.id),
+        credential.email,
+        credential.authMethod,
+        credential.accountSource,
+        credential.accountSourceLabel,
+        credential.kamIdp,
+        credential.kamProvider,
+        credential.kamGroupId,
+        credential.kamGroupName,
+        credential.proxyUrl,
+        ...(credential.labels || []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+
+      if (query && !haystack.includes(query)) return false
+      if (statusFilter === 'enabled' && credential.disabled) return false
+      if (statusFilter === 'disabled' && !credential.disabled) return false
+      if (statusFilter === 'failed' && credential.failureCount === 0) return false
+      if (statusFilter === 'current' && !credential.isCurrent) return false
+      if (sourceFilter === 'manual' && credential.accountSource) return false
+      if (sourceFilter !== 'all' && sourceFilter !== 'manual' && credential.accountSource !== sourceFilter) return false
+      if (proxyFilter === 'bound' && !credential.hasProxy) return false
+      if (proxyFilter === 'unbound' && credential.hasProxy) return false
+      if (overageFilter === 'enabled' && balance?.overageEnabled !== true) return false
+      if (overageFilter === 'capable' && balance?.overageCapable !== true) return false
+      if (overageFilter === 'disabled' && balance?.overageEnabled === true) return false
+      if (overageFilter === 'unknown' && balance?.overageCapable !== undefined) return false
+      return true
+    })
+  }, [balanceMap, data?.credentials, overageFilter, proxyFilter, searchTerm, sourceFilter, statusFilter])
 
   // 计算分页
-  const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
+  const totalPages = Math.ceil(filteredCredentials.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const currentCredentials = data?.credentials.slice(startIndex, endIndex) || []
+  const currentCredentials = filteredCredentials.slice(startIndex, endIndex)
+  const currentPageSelected = currentCredentials.length > 0 && currentCredentials.every(credential => selectedIds.has(credential.id))
   const disabledCredentialCount = data?.credentials.filter(credential => credential.disabled).length || 0
   const selectedDisabledCount = Array.from(selectedIds).filter(id => {
     const credential = data?.credentials.find(c => c.id === id)
@@ -72,7 +137,22 @@ export function Dashboard({ onLogout }: DashboardProps) {
   // 当凭据列表变化时重置到第一页
   useEffect(() => {
     setCurrentPage(1)
-  }, [data?.credentials.length])
+  }, [filteredCredentials.length, searchTerm, statusFilter, sourceFilter, overageFilter, proxyFilter])
+
+  useEffect(() => {
+    localStorage.setItem('credentialViewMode', viewMode)
+  }, [viewMode])
+
+  useEffect(() => {
+    if (!balanceSummary?.balances) return
+    setBalanceMap(prev => {
+      const next = new Map(prev)
+      balanceSummary.balances.forEach(balance => {
+        next.set(balance.id, balance)
+      })
+      return next
+    })
+  }, [balanceSummary])
 
   // 只保留当前仍存在的凭据缓存，避免删除后残留旧数据
   useEffect(() => {
@@ -98,6 +178,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
       if (prev.size === 0) {
         return prev
       }
+      const next = new Set<number>()
+      prev.forEach(id => {
+        if (validIds.has(id)) {
+          next.add(id)
+        }
+      })
+      return next.size === prev.size ? prev : next
+    })
+
+    setSelectedIds(prev => {
       const next = new Set<number>()
       prev.forEach(id => {
         if (validIds.has(id)) {
@@ -142,6 +232,64 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const deselectAll = () => {
     setSelectedIds(new Set())
+  }
+
+  const toggleSelectCurrentPage = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (currentPageSelected) {
+        currentCredentials.forEach(credential => next.delete(credential.id))
+      } else {
+        currentCredentials.forEach(credential => next.add(credential.id))
+      }
+      return next
+    })
+  }
+
+  const handleEnableOverage = () => {
+    const ids = selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+    enableOverageAll.mutate(ids, {
+      onSuccess: (result) => {
+        toast.success(`超额处理完成：开启 ${result.enabledIds.length} 个，跳过 ${result.skippedIds.length} 个，失败 ${result.failedIds.length} 个`)
+      },
+      onError: (error) => toast.error(`超额处理失败: ${extractErrorMessage(error)}`),
+    })
+  }
+
+  const handleRefreshAllBalances = () => {
+    refreshAllBalancesMutation.mutate(undefined, {
+      onSuccess: (summary) => {
+        setBalanceMap(prev => {
+          const next = new Map(prev)
+          summary.balances.forEach(balance => next.set(balance.id, balance))
+          return next
+        })
+        toast.success(`余额刷新完成：${summary.queriedCount}/${summary.totalCount}`)
+      },
+      onError: (error) => toast.error(`余额刷新失败: ${extractErrorMessage(error)}`),
+    })
+  }
+
+  const handleExportKam = () => {
+    const ids = selectedIds.size > 0 ? Array.from(selectedIds) : undefined
+    exportKam.mutate(
+      { ids, enabledOnly: selectedIds.size === 0 },
+      {
+        onSuccess: (payload) => {
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = `kam-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`
+          document.body.appendChild(anchor)
+          anchor.click()
+          anchor.remove()
+          URL.revokeObjectURL(url)
+          toast.success(`已导出 ${payload.accounts.length} 个账号`)
+        },
+        onError: (error) => toast.error(`导出失败: ${extractErrorMessage(error)}`),
+      }
+    )
   }
 
   // 批量删除（仅删除已禁用项）
@@ -520,6 +668,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <span className="hidden sm:inline">API Keys</span>
               </Button>
               <Button
+                variant={activeTab === 'proxies' ? 'default' : 'secondary'}
+                size="sm"
+                onClick={() => setActiveTab('proxies')}
+                className="h-7 px-2 sm:px-3 text-xs border-0 shadow-none rounded-none border-r-[2.5px] border-border"
+              >
+                <Network className="h-3 w-3 sm:mr-1" />
+                <span className="hidden sm:inline">代理管理</span>
+              </Button>
+              <Button
                 variant={activeTab === 'logs' ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setActiveTab('logs')}
@@ -561,6 +718,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <ErrorLogsPanel />
         ) : activeTab === 'apikeys' ? (
           <ApiKeysPanel />
+        ) : activeTab === 'proxies' ? (
+          <ProxyPoolPanel />
         ) : (
         <>
         {/* 统计卡片 */}
@@ -576,12 +735,20 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <div className="nb-card animate-fade-in-up animate-delay-3">
             <div className="nb-label text-foreground/60">全局积分</div>
             <div className="text-3xl font-bold tracking-tight mono text-nb-orange">
-                {liveCreditsTotal !== null ? liveCreditsTotal.toFixed(1) : '-'}
+                {balanceSummary?.queriedCount
+                  ? balanceSummary.totalRemaining.toFixed(1)
+                  : liveCreditsTotal !== null
+                    ? liveCreditsTotal.toFixed(1)
+                    : '-'}
               </div>
-              {liveCreditsTotal !== null && (
+              {(balanceSummary?.queriedCount || liveCreditsTotal !== null) && (
                 <div className="mt-1 space-y-1">
                   <div className="flex items-center justify-between text-xs text-foreground/60">
-                    <span>{liveCreditsQueried}/{data?.credentials.length || 0} 已查询</span>
+                    <span>
+                      {balanceSummary?.queriedCount
+                        ? `${balanceSummary.queriedCount}/${balanceSummary.totalCount} 已缓存`
+                        : `${liveCreditsQueried}/${data?.credentials.length || 0} 已查询`}
+                    </span>
                   </div>
                   {queryingInfo && (
                     <div className="h-1.5 w-full rounded-sm bg-muted overflow-hidden border border-border">
@@ -645,6 +812,17 @@ export function Dashboard({ onLogout }: DashboardProps) {
               )}
               {data?.credentials && data.credentials.length > 0 && (
                 <Button
+                  onClick={handleRefreshAllBalances}
+                  size="sm"
+                  variant="outline"
+                  disabled={refreshAllBalancesMutation.isPending}
+                >
+                  <RefreshCw className={`h-4 w-4 sm:mr-2 ${refreshAllBalancesMutation.isPending ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">刷新余额</span>
+                </Button>
+              )}
+              {data?.credentials && data.credentials.length > 0 && (
+                <Button
                   onClick={handleQueryCurrentPageInfo}
                   size="sm"
                   variant="outline"
@@ -652,6 +830,28 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 >
                   <RefreshCw className={`h-4 w-4 sm:mr-2 ${queryingInfo ? 'animate-spin' : ''}`} />
                   <span className="hidden sm:inline">{queryingInfo ? `查询中... ${queryInfoProgress.current}/${queryInfoProgress.total}` : '查询信息'}</span>
+                </Button>
+              )}
+              {data?.credentials && data.credentials.length > 0 && (
+                <Button
+                  onClick={handleEnableOverage}
+                  size="sm"
+                  variant="outline"
+                  disabled={enableOverageAll.isPending}
+                >
+                  <Zap className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">{selectedIds.size > 0 ? '选中开超额' : '批量开超额'}</span>
+                </Button>
+              )}
+              {data?.credentials && data.credentials.length > 0 && (
+                <Button
+                  onClick={handleExportKam}
+                  size="sm"
+                  variant="outline"
+                  disabled={exportKam.isPending}
+                >
+                  <FileText className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">{selectedIds.size > 0 ? '导出选中' : 'KAM 导出'}</span>
                 </Button>
               )}
               {data?.credentials && data.credentials.length > 0 && (
@@ -681,28 +881,66 @@ export function Dashboard({ onLogout }: DashboardProps) {
               </Button>
             </div>
           </div>
+
+          <CredentialFilterBar
+            search={searchTerm}
+            onSearchChange={setSearchTerm}
+            status={statusFilter}
+            onStatusChange={setStatusFilter}
+            source={sourceFilter}
+            onSourceChange={setSourceFilter}
+            overage={overageFilter}
+            onOverageChange={setOverageFilter}
+            proxy={proxyFilter}
+            onProxyChange={setProxyFilter}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            filteredCount={filteredCredentials.length}
+            totalCount={data?.credentials.length || 0}
+          />
+
           {data?.credentials.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 暂无凭据
               </CardContent>
             </Card>
+          ) : filteredCredentials.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                没有匹配的凭据
+              </CardContent>
+            </Card>
           ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {currentCredentials.map((credential) => (
-                  <CredentialCard
-                    key={credential.id}
-                    credential={credential}
-                    onViewBalance={handleViewBalance}
-                    selected={selectedIds.has(credential.id)}
-                    onToggleSelect={() => toggleSelect(credential.id)}
-                    balance={balanceMap.get(credential.id) || null}
-                    loadingBalance={loadingBalanceIds.has(credential.id)}
-                    rpm={rpmData?.byCredential?.[String(credential.id)] ?? 0}
-                  />
-                ))}
-              </div>
+              {viewMode === 'table' ? (
+                <CredentialTable
+                  credentials={currentCredentials}
+                  selectedIds={selectedIds}
+                  allSelected={currentPageSelected}
+                  onToggleSelect={toggleSelect}
+                  onToggleSelectAll={toggleSelectCurrentPage}
+                  onViewBalance={handleViewBalance}
+                  balances={balanceMap}
+                  loadingBalanceIds={loadingBalanceIds}
+                  rpmByCredential={rpmData?.byCredential}
+                />
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {currentCredentials.map((credential) => (
+                    <CredentialCard
+                      key={credential.id}
+                      credential={credential}
+                      onViewBalance={handleViewBalance}
+                      selected={selectedIds.has(credential.id)}
+                      onToggleSelect={() => toggleSelect(credential.id)}
+                      balance={balanceMap.get(credential.id) || null}
+                      loadingBalance={loadingBalanceIds.has(credential.id)}
+                      rpm={rpmData?.byCredential?.[String(credential.id)] ?? 0}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* 分页控件 */}
               {totalPages > 1 && (
@@ -717,7 +955,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   </Button>
                   <span className="text-sm text-muted-foreground">
                     <span className="sm:hidden">{currentPage}/{totalPages}</span>
-                    <span className="hidden sm:inline">第 {currentPage} / {totalPages} 页（共 {data?.credentials.length} 个凭据）</span>
+                    <span className="hidden sm:inline">第 {currentPage} / {totalPages} 页（共 {filteredCredentials.length} 个凭据）</span>
                   </span>
                   <Button
                     variant="outline"

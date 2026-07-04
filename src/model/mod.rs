@@ -4,5 +4,6 @@ pub mod api_key;
 pub mod arg;
 pub mod config;
 pub mod credential_event;
+pub mod proxy_pool;
 pub mod rpm;
 pub mod usage;

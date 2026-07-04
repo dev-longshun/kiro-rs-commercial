@@ -3,11 +3,21 @@ import { storage } from '@/lib/storage'
 import type {
   CredentialsStatusResponse,
   BalanceResponse,
+  BalanceSummaryResponse,
+  BalanceAutoRefreshSettings,
+  SetBalanceAutoRefreshSettingsRequest,
+  EnableOverageAllResult,
+  LivenessCheckResponse,
   SuccessResponse,
   SetDisabledRequest,
   SetPriorityRequest,
   AddCredentialRequest,
   AddCredentialResponse,
+  AuthFlowPollResponse,
+  BuilderIdStartResponse,
+  IamSsoStartResponse,
+  KiroSsoStartResponse,
+  SsoTokenImportResponse,
   UpdateCredentialRequest,
   ApiKeyItem,
   CreateApiKeyRequest,
@@ -16,6 +26,14 @@ import type {
   RpmSnapshot,
   CredentialEventsResponse,
   CredentialEvent,
+  ProxyPoolEntry,
+  ProxyBindingEntry,
+  AddProxyRequest,
+  UpdateProxyRequest,
+  SetProxyBindingRequest,
+  ExitIpResult,
+  CompactionConfig,
+  KamExportResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -74,8 +92,63 @@ export async function resetCredentialFailure(
 }
 
 // 获取凭据余额
-export async function getCredentialBalance(id: number): Promise<BalanceResponse> {
-  const { data } = await api.get<BalanceResponse>(`/credentials/${id}/balance`)
+export async function getCredentialBalance(id: number, refresh = false): Promise<BalanceResponse> {
+  const { data } = await api.get<BalanceResponse>(`/credentials/${id}/balance`, {
+    params: refresh ? { refresh: true } : undefined,
+  })
+  return data
+}
+
+// 强制刷新单个凭据 Token
+export async function refreshCredentialToken(id: number): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(`/credentials/${id}/refresh-token`)
+  return data
+}
+
+// 单凭据存活检测
+export async function checkCredentialLiveness(id: number): Promise<LivenessCheckResponse> {
+  const { data } = await api.post<LivenessCheckResponse>(`/credentials/${id}/liveness-check`)
+  return data
+}
+
+// 设置单个凭据超额
+export async function setCredentialOverage(id: number, enabled: boolean): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(`/credentials/${id}/overage`, { enabled })
+  return data
+}
+
+// 批量开启可开启超额的凭据；传 ids 时只处理这些凭据，不传则全局处理
+export async function enableOverageForAllCapable(ids?: number[]): Promise<EnableOverageAllResult> {
+  const { data } = await api.post<EnableOverageAllResult>(
+    '/credentials/overage/enable-all',
+    ids && ids.length > 0 ? { ids } : { all: true }
+  )
+  return data
+}
+
+// 获取全局余额汇总
+export async function getBalanceSummary(): Promise<BalanceSummaryResponse> {
+  const { data } = await api.get<BalanceSummaryResponse>('/balance/summary')
+  return data
+}
+
+// 刷新所有凭据余额
+export async function refreshAllBalances(): Promise<BalanceSummaryResponse> {
+  const { data } = await api.post<BalanceSummaryResponse>('/balance/refresh-all')
+  return data
+}
+
+// 获取余额自动刷新设置
+export async function getBalanceAutoRefreshSettings(): Promise<BalanceAutoRefreshSettings> {
+  const { data } = await api.get<BalanceAutoRefreshSettings>('/balance/auto-refresh')
+  return data
+}
+
+// 设置余额自动刷新设置
+export async function setBalanceAutoRefreshSettings(
+  req: SetBalanceAutoRefreshSettingsRequest
+): Promise<BalanceAutoRefreshSettings> {
+  const { data } = await api.put<BalanceAutoRefreshSettings>('/balance/auto-refresh', req)
   return data
 }
 
@@ -104,6 +177,57 @@ export async function addCredential(
   req: AddCredentialRequest
 ): Promise<AddCredentialResponse> {
   const { data } = await api.post<AddCredentialResponse>('/credentials', req)
+  return data
+}
+
+// ============ 登录/导入流程 ============
+
+export async function startBuilderIdLogin(region?: string): Promise<BuilderIdStartResponse> {
+  const { data } = await api.post<BuilderIdStartResponse>('/auth/builderid/start', { region })
+  return data
+}
+
+export async function pollBuilderIdLogin(sessionId: string): Promise<AuthFlowPollResponse> {
+  const { data } = await api.post<AuthFlowPollResponse>('/auth/builderid/poll', { sessionId })
+  return data
+}
+
+export async function startIamSsoLogin(startUrl: string, region?: string): Promise<IamSsoStartResponse> {
+  const { data } = await api.post<IamSsoStartResponse>('/auth/iam-sso/start', { startUrl, region })
+  return data
+}
+
+export async function completeIamSsoLogin(
+  sessionId: string,
+  callbackUrl: string
+): Promise<AddCredentialResponse> {
+  const { data } = await api.post<AddCredentialResponse>('/auth/iam-sso/complete', {
+    sessionId,
+    callbackUrl,
+  })
+  return data
+}
+
+export async function startKiroSsoLogin(region?: string): Promise<KiroSsoStartResponse> {
+  const { data } = await api.post<KiroSsoStartResponse>('/auth/kiro-sso/start', { region })
+  return data
+}
+
+export async function pollKiroSsoLogin(sessionId: string): Promise<AuthFlowPollResponse> {
+  const { data } = await api.post<AuthFlowPollResponse>('/auth/kiro-sso/poll', { sessionId })
+  return data
+}
+
+export async function cancelKiroSsoLogin(sessionId: string): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>('/auth/kiro-sso/cancel', { sessionId })
+  return data
+}
+
+export async function importSsoToken(
+  bearerToken: string,
+  region?: string
+): Promise<SsoTokenImportResponse> {
+  const { data } = await api.post<SsoTokenImportResponse>('/auth/sso-token', { bearerToken, region })
   return data
 }
 
@@ -190,6 +314,103 @@ export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
 // 获取实时 RPM 数据
 export async function getRpm(): Promise<RpmSnapshot> {
   const { data } = await api.get<RpmSnapshot>('/rpm')
+  return data
+}
+
+// ============ 代理池管理 ============
+
+export async function getProxyPool(): Promise<ProxyPoolEntry[]> {
+  const { data } = await api.get<ProxyPoolEntry[]>('/proxy-pool')
+  return data
+}
+
+export async function addProxy(req: AddProxyRequest): Promise<ProxyPoolEntry> {
+  const { data } = await api.post<ProxyPoolEntry>('/proxy-pool', req)
+  return data
+}
+
+export async function updateProxy(id: number, req: UpdateProxyRequest): Promise<ProxyPoolEntry> {
+  const { data } = await api.put<ProxyPoolEntry>(`/proxy-pool/${id}`, req)
+  return data
+}
+
+export async function deleteProxy(id: number): Promise<SuccessResponse> {
+  const { data } = await api.delete<SuccessResponse>(`/proxy-pool/${id}`)
+  return data
+}
+
+export async function setProxyEnabled(id: number, enabled: boolean): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(`/proxy-pool/${id}/enabled`, { enabled })
+  return data
+}
+
+export async function checkProxy(id: number): Promise<ProxyPoolEntry> {
+  const { data } = await api.post<ProxyPoolEntry>(`/proxy-pool/${id}/check`)
+  return data
+}
+
+export async function getProxyBindings(): Promise<ProxyBindingEntry[]> {
+  const { data } = await api.get<ProxyBindingEntry[]>('/proxy-pool/bindings')
+  return data
+}
+
+export async function setProxyBinding(
+  credentialId: number,
+  req: SetProxyBindingRequest
+): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(`/credentials/${credentialId}/proxy-binding`, req)
+  return data
+}
+
+export async function rebalanceProxies(): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>('/proxy-pool/rebalance')
+  return data
+}
+
+export async function deleteUnhealthyProxies(): Promise<{ deleted: number; clearedBindings?: number }> {
+  const { data } = await api.post<{ deleted: number; clearedBindings?: number }>('/proxy-pool/delete-unhealthy')
+  return data
+}
+
+export async function deleteAllProxies(): Promise<{ deleted: number; clearedBindings?: number }> {
+  const { data } = await api.post<{ deleted: number; clearedBindings?: number }>('/proxy-pool/delete-all')
+  return data
+}
+
+export async function disableHighLatencyProxies(
+  thresholdMs: number
+): Promise<{ disabled: number; thresholdMs: number }> {
+  const { data } = await api.post<{ disabled: number; thresholdMs: number }>(
+    '/proxy-pool/disable-high-latency',
+    { thresholdMs }
+  )
+  return data
+}
+
+export async function checkProxyExitIps(): Promise<ExitIpResult[]> {
+  const { data } = await api.get<ExitIpResult[]>('/proxy-pool/check-ip')
+  return data
+}
+
+// ============ KAM / Compaction ============
+
+export async function exportKam(params?: { enabledOnly?: boolean; ids?: number[] }): Promise<KamExportResponse> {
+  const { data } = await api.get<KamExportResponse>('/credentials/export-kam', {
+    params: {
+      enabledOnly: params?.enabledOnly || undefined,
+      ids: params?.ids && params.ids.length > 0 ? params.ids.join(',') : undefined,
+    },
+  })
+  return data
+}
+
+export async function getCompactionConfig(): Promise<CompactionConfig> {
+  const { data } = await api.get<CompactionConfig>('/config/compaction')
+  return data
+}
+
+export async function setCompactionConfig(config: CompactionConfig): Promise<CompactionConfig> {
+  const { data } = await api.put<CompactionConfig>('/config/compaction', config)
   return data
 }
 

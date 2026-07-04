@@ -14,9 +14,12 @@ use parking_lot::RwLock;
 
 use super::service::AdminService;
 use super::types::AdminErrorResponse;
+use crate::anthropic::compaction::CompactionConfig;
 use crate::common::auth;
 use crate::model::api_key::ApiKeyManager;
+use crate::model::config::TlsBackend;
 use crate::model::credential_event::CredentialEventStore;
+use crate::model::proxy_pool::ProxyPoolManager;
 use crate::model::rpm::RpmTracker;
 use crate::model::usage::UsageTracker;
 
@@ -37,20 +40,31 @@ pub struct AdminState {
     pub rpm_tracker: Option<Arc<RpmTracker>>,
     /// 凭据事件日志存储
     pub event_store: Option<Arc<CredentialEventStore>>,
+    /// 代理池管理器
+    pub proxy_pool: Option<Arc<ProxyPoolManager>>,
+    /// TLS 后端配置（用于代理检查）
+    pub tls_backend: TlsBackend,
+    /// 运行时 Compaction 配置
+    pub compaction_config: Arc<RwLock<CompactionConfig>>,
     /// 配置文件路径（用于持久化修改）
     pub config_path: Option<PathBuf>,
 }
 
 impl AdminState {
     pub fn new(admin_api_key: Arc<RwLock<String>>, service: AdminService) -> Self {
+        let service = Arc::new(service);
+        service.start_balance_auto_refresh();
         Self {
             admin_api_key,
             master_api_key: None,
-            service: Arc::new(service),
+            service,
             api_key_manager: None,
             usage_tracker: None,
             rpm_tracker: None,
             event_store: None,
+            proxy_pool: None,
+            tls_backend: TlsBackend::Rustls,
+            compaction_config: Arc::new(RwLock::new(CompactionConfig::disabled())),
             config_path: None,
         }
     }
@@ -80,6 +94,21 @@ impl AdminState {
         self
     }
 
+    pub fn with_proxy_pool(mut self, pool: Arc<ProxyPoolManager>) -> Self {
+        self.proxy_pool = Some(pool);
+        self
+    }
+
+    pub fn with_tls_backend(mut self, tls_backend: TlsBackend) -> Self {
+        self.tls_backend = tls_backend;
+        self
+    }
+
+    pub fn with_compaction_config(mut self, config: Arc<RwLock<CompactionConfig>>) -> Self {
+        self.compaction_config = config;
+        self
+    }
+
     pub fn with_config_path(mut self, path: PathBuf) -> Self {
         self.config_path = Some(path);
         self
@@ -95,7 +124,9 @@ pub async fn admin_auth_middleware(
     let api_key = auth::extract_api_key(&request);
 
     match api_key {
-        Some(key) if auth::constant_time_eq(&key, &state.admin_api_key.read()) => next.run(request).await,
+        Some(key) if auth::constant_time_eq(&key, &state.admin_api_key.read()) => {
+            next.run(request).await
+        }
         _ => {
             let error = AdminErrorResponse::authentication_error();
             (StatusCode::UNAUTHORIZED, Json(error)).into_response()

@@ -143,18 +143,16 @@ async fn main() {
             .parent()
             .unwrap_or(std::path::Path::new("."));
 
-        let manager = ApiKeyManager::load(data_dir.join("api_keys.json"))
-            .unwrap_or_else(|e| {
-                tracing::error!("加载 API Key 数据失败: {}", e);
-                std::process::exit(1);
-            });
+        let manager = ApiKeyManager::load(data_dir.join("api_keys.json")).unwrap_or_else(|e| {
+            tracing::error!("加载 API Key 数据失败: {}", e);
+            std::process::exit(1);
+        });
         let manager = Arc::new(manager);
 
-        let tracker = UsageTracker::load(data_dir.join("api_key_usage.json"))
-            .unwrap_or_else(|e| {
-                tracing::error!("加载用量数据失败: {}", e);
-                std::process::exit(1);
-            });
+        let tracker = UsageTracker::load(data_dir.join("api_key_usage.json")).unwrap_or_else(|e| {
+            tracing::error!("加载用量数据失败: {}", e);
+            std::process::exit(1);
+        });
         let tracker = Arc::new(tracker);
 
         tracing::info!("API Key 多用户管理已启用");
@@ -163,9 +161,19 @@ async fn main() {
         (None, None)
     };
 
+    let compaction_config = Arc::new(parking_lot::RwLock::new(
+        anthropic::compaction::CompactionConfig {
+            enabled: config.compaction_enabled,
+            threshold_percent: config.compaction_threshold_percent,
+            preserve_recent_pairs: config.compaction_preserve_recent_pairs,
+            tool_result_max_chars: config.compaction_tool_result_max_chars,
+        },
+    ));
+
     let mut anthropic_app_state = anthropic::middleware::AppState::new(api_key_shared.clone())
         .with_rpm_tracker(rpm_tracker.clone())
-        .with_token_manager(token_manager.clone());
+        .with_token_manager(token_manager.clone())
+        .with_compaction_config_store(compaction_config.clone());
     if let Some(ref manager) = api_key_manager {
         anthropic_app_state = anthropic_app_state.with_api_key_manager(manager.clone());
     }
@@ -173,10 +181,8 @@ async fn main() {
         anthropic_app_state = anthropic_app_state.with_usage_tracker(tracker.clone());
     }
 
-    let anthropic_app = anthropic::create_router_with_provider_and_state(
-        anthropic_app_state,
-        Some(kiro_provider),
-    );
+    let anthropic_app =
+        anthropic::create_router_with_provider_and_state(anthropic_app_state, Some(kiro_provider));
 
     // 构建 Admin API 路由（如果配置了非空的 admin_api_key）
     let app = if let Some(admin_key) = &config.admin_api_key {
@@ -184,12 +190,28 @@ async fn main() {
             tracing::warn!("admin_api_key 配置为空，Admin API 未启用");
             anthropic_app
         } else {
+            let data_dir = std::path::Path::new(&config_path)
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
+            let proxy_pool = Arc::new(
+                model::proxy_pool::ProxyPoolManager::load(
+                    data_dir.join("proxy_pool.json"),
+                    config.tls_backend,
+                )
+                .unwrap_or_else(|e| {
+                    tracing::error!("加载代理池失败: {}", e);
+                    std::process::exit(1);
+                }),
+            );
             let admin_service = admin::AdminService::new(token_manager.clone());
             let admin_api_key_shared = Arc::new(parking_lot::RwLock::new(admin_key.clone()));
             let mut admin_state = admin::AdminState::new(admin_api_key_shared, admin_service)
                 .with_master_api_key(api_key_shared.clone())
                 .with_rpm_tracker(rpm_tracker.clone())
                 .with_event_store(event_store.clone())
+                .with_proxy_pool(proxy_pool)
+                .with_tls_backend(config.tls_backend)
+                .with_compaction_config(compaction_config.clone())
                 .with_config_path(std::path::PathBuf::from(&config_path));
             if let Some(ref manager) = api_key_manager {
                 admin_state = admin_state.with_api_key_manager(manager.clone());

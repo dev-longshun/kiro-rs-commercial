@@ -16,6 +16,10 @@ pub struct UsageLimitsResponse {
     #[serde(default)]
     pub subscription_info: Option<SubscriptionInfo>,
 
+    /// 超额配置
+    #[serde(default)]
+    pub overage_configuration: Option<OverageConfiguration>,
+
     /// 使用量明细列表
     #[serde(default)]
     pub usage_breakdown_list: Vec<UsageBreakdown>,
@@ -28,6 +32,25 @@ pub struct SubscriptionInfo {
     /// 订阅标题 (KIRO PRO+ / KIRO FREE 等)
     #[serde(default)]
     pub subscription_title: Option<String>,
+
+    /// 超额能力原始字符串
+    #[serde(default)]
+    pub overage_capability: Option<String>,
+
+    /// 邮箱（部分响应会携带）
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+/// 超额配置
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverageConfiguration {
+    #[serde(default)]
+    pub overage_enabled: Option<bool>,
+
+    #[serde(default)]
+    pub overage_status: Option<String>,
 }
 
 /// 使用量明细
@@ -137,6 +160,38 @@ impl UsageLimitsResponse {
         self.subscription_info
             .as_ref()
             .and_then(|info| info.subscription_title.as_deref())
+    }
+
+    /// 获取邮箱
+    pub fn email(&self) -> Option<&str> {
+        self.subscription_info
+            .as_ref()
+            .and_then(|info| info.email.as_deref())
+    }
+
+    /// 用户当前是否开启了超额
+    pub fn overage_enabled(&self) -> Option<bool> {
+        let cfg = self.overage_configuration.as_ref()?;
+        if let Some(enabled) = cfg.overage_enabled {
+            return Some(enabled);
+        }
+        cfg.overage_status
+            .as_deref()
+            .map(|status| status.eq_ignore_ascii_case("ENABLED"))
+    }
+
+    /// 账号是否能开启超额
+    pub fn overage_capable(&self) -> Option<bool> {
+        let capability = self
+            .subscription_info
+            .as_ref()
+            .and_then(|s| s.overage_capability.as_deref())?;
+        let normalized = capability.trim().to_ascii_uppercase();
+        match normalized.as_str() {
+            "ENABLED" | "CAPABLE" | "SUPPORTED" | "AVAILABLE" => Some(true),
+            "DISABLED" | "INELIGIBLE" | "UNSUPPORTED" | "UNAVAILABLE" => Some(false),
+            _ => None,
+        }
     }
 
     /// 获取第一个使用量明细

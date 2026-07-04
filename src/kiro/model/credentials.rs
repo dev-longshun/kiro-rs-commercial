@@ -90,6 +90,50 @@ pub struct KiroCredentials {
     #[serde(default)]
     pub subscription_title: Option<String>,
 
+    /// 账号来源分类（KAM / 登录流程 / 手动导入）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub account_source: Option<String>,
+
+    /// 账号来源展示标签
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub account_source_label: Option<String>,
+
+    /// KAM 顶层 idp 原始值
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub kam_idp: Option<String>,
+
+    /// KAM credentials.provider 原始值
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub kam_provider: Option<String>,
+
+    /// KAM 分组 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub kam_group_id: Option<String>,
+
+    /// KAM 分组名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub kam_group_name: Option<String>,
+
+    /// KAM / 手动标签
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+
+    /// 最近一次显式 Token 刷新时间
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub last_token_refresh_at: Option<String>,
+
+    /// 最近一次存活检测时间
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub last_liveness_check_at: Option<String>,
+
     /// 凭据级代理 URL（可选）
     /// 支持 http/https/socks5 协议
     /// 特殊值 "direct" 表示显式不使用代理（即使全局配置了代理）
@@ -426,6 +470,15 @@ mod tests {
             machine_id: None,
             email: None,
             subscription_title: None,
+            account_source: None,
+            account_source_label: None,
+            kam_idp: None,
+            kam_provider: None,
+            kam_group_id: None,
+            kam_group_name: None,
+            labels: Vec::new(),
+            last_token_refresh_at: None,
+            last_liveness_check_at: None,
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
@@ -547,6 +600,15 @@ mod tests {
             machine_id: None,
             email: None,
             subscription_title: None,
+            account_source: None,
+            account_source_label: None,
+            kam_idp: None,
+            kam_provider: None,
+            kam_group_id: None,
+            kam_group_name: None,
+            labels: Vec::new(),
+            last_token_refresh_at: None,
+            last_liveness_check_at: None,
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
@@ -580,6 +642,15 @@ mod tests {
             machine_id: None,
             email: None,
             subscription_title: None,
+            account_source: None,
+            account_source_label: None,
+            kam_idp: None,
+            kam_provider: None,
+            kam_group_id: None,
+            kam_group_name: None,
+            labels: Vec::new(),
+            last_token_refresh_at: None,
+            last_liveness_check_at: None,
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
@@ -695,6 +766,15 @@ mod tests {
             machine_id: Some("c".repeat(64)),
             email: None,
             subscription_title: None,
+            account_source: None,
+            account_source_label: None,
+            kam_idp: None,
+            kam_provider: None,
+            kam_group_id: None,
+            kam_group_name: None,
+            labels: Vec::new(),
+            last_token_refresh_at: None,
+            last_liveness_check_at: None,
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,

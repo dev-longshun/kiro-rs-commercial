@@ -1,5 +1,6 @@
 //! Kiro API 客户端模块
 
+pub mod auth_flows;
 pub mod machine_id;
 pub mod model;
 pub mod parser;
