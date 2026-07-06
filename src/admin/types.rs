@@ -153,6 +153,27 @@ pub struct AddCredentialRequest {
     /// 用户邮箱（可选，用于前端显示）
     pub email: Option<String>,
 
+    /// 导入文件中已有的订阅标题（可选，用于余额接口不可用时的初始展示）
+    pub subscription_title: Option<String>,
+
+    /// 导入文件中已有的当前用量（可选）
+    pub current_usage: Option<f64>,
+
+    /// 导入文件中已有的使用限额（可选）
+    pub usage_limit: Option<f64>,
+
+    /// 导入文件中已有的下次重置时间（Unix 秒，可选）
+    pub next_reset_at: Option<f64>,
+
+    /// 导入文件中已有的超额开关状态（可选）
+    pub overage_enabled: Option<bool>,
+
+    /// 导入文件中已有的超额能力判定（可选）
+    pub overage_capable: Option<bool>,
+
+    /// 导入文件中已有的超额能力原始字符串（可选）
+    pub overage_capability_raw: Option<String>,
+
     /// 账号来源分类
     pub account_source: Option<String>,
 

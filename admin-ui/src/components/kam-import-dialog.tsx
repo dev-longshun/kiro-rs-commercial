@@ -52,6 +52,16 @@ interface KamAccount {
   group_id?: string
   groupName?: string
   group_name?: string
+  subscription?: {
+    type?: string
+    title?: string
+    overageCapability?: string
+  }
+  usage?: {
+    current?: number
+    limit?: number
+    nextResetDate?: string | number
+  }
   labels?: string[]
   tags?: string[]
   accountSource?: string
@@ -106,15 +116,67 @@ function normalizeKamLabels(account: KamAccount): string[] {
   return Array.from(new Set(labels.map(label => label.trim()).filter(Boolean)))
 }
 
-function isExternalIdpBalanceSoftError(authMethod: string, error: unknown): boolean {
-  if (authMethod !== 'external_idp') return false
+function isBalanceSoftError(error: unknown): boolean {
   const message = extractErrorMessage(error).toLowerCase()
   return (
     message.includes('403') ||
+    message.includes('forbidden') ||
     message.includes('not authorized') ||
+    message.includes('权限不足') ||
+    message.includes('无法获取使用额度') ||
     message.includes('profilearn') ||
     message.includes('accessdenied')
   )
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return value
+}
+
+function timestampSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? value / 1000 : value
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const millis = Date.parse(value)
+    if (Number.isFinite(millis)) return millis / 1000
+  }
+  return undefined
+}
+
+function overageCapable(value: string | undefined): boolean | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toUpperCase()
+  if (normalized === 'OVERAGE_CAPABLE') return true
+  if (normalized === 'NOT_OVERAGE_CAPABLE' || normalized === 'NOT_AVAILABLE') return false
+  return undefined
+}
+
+function importBalancePayload(account: KamAccount) {
+  const currentUsage = finiteNumber(account.usage?.current)
+  const usageLimit = finiteNumber(account.usage?.limit)
+  const overageCapabilityRaw = firstNonEmptyString(account.subscription?.overageCapability)
+  return {
+    subscriptionTitle: firstNonEmptyString(account.subscription?.title, account.subscription?.type),
+    currentUsage,
+    usageLimit,
+    nextResetAt: timestampSeconds(account.usage?.nextResetDate),
+    overageCapable: overageCapable(overageCapabilityRaw),
+    overageCapabilityRaw,
+  }
+}
+
+function importedUsageText(account: KamAccount): string {
+  const currentUsage = finiteNumber(account.usage?.current)
+  const usageLimit = finiteNumber(account.usage?.limit)
+  if (currentUsage !== undefined && usageLimit !== undefined) {
+    return `${currentUsage}/${usageLimit}（导入快照）`
+  }
+  if (usageLimit !== undefined) {
+    return `0/${usageLimit}（导入快照）`
+  }
+  return '已导入，余额稍后同步'
 }
 
 // 校验元素是否为有效的 KAM 账号结构
@@ -350,6 +412,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
           const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
           const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || account.idp
+          const exportedRegion = cred.region?.trim() || undefined
           const isExternalIdp =
             textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
             Boolean(explicitTokenEndpoint || inferredIssuerUrl) ||
@@ -378,7 +441,8 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
             accessToken: authMethod === 'external_idp' ? cred.accessToken?.trim() || undefined : undefined,
             refreshToken: token,
             authMethod,
-            authRegion: cred.region?.trim() || undefined,
+            authRegion: exportedRegion,
+            apiRegion: exportedRegion,
             clientId,
             clientSecret: authMethod === 'idc' ? clientSecret : undefined,
             tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,
@@ -399,6 +463,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
             kamGroupId: firstNonEmptyString(account.groupId, account.group_id),
             kamGroupName: firstNonEmptyString(account.groupName, account.group_name),
             labels: normalizeKamLabels(account),
+            ...importBalancePayload(account),
           })
 
           addedCredId = addedCred.credentialId
@@ -409,7 +474,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
           try {
             balance = await getCredentialBalance(addedCred.credentialId)
           } catch (balanceError) {
-            if (!isExternalIdpBalanceSoftError(authMethod, balanceError)) {
+            if (!isBalanceSoftError(balanceError)) {
               throw balanceError
             }
 
@@ -421,7 +486,7 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
               next[i] = {
                 ...next[i],
                 status: 'verified',
-                usage: '已导入，余额稍后同步',
+                usage: importedUsageText(account),
                 email: addedCred.email || account.email,
                 credentialId: addedCred.credentialId,
               }

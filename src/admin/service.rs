@@ -389,6 +389,42 @@ impl AdminService {
         balance
     }
 
+    fn balance_from_import_metadata(
+        id: u64,
+        subscription_title: Option<String>,
+        current_usage: Option<f64>,
+        usage_limit: Option<f64>,
+        next_reset_at: Option<f64>,
+        overage_enabled: Option<bool>,
+        overage_capable: Option<bool>,
+        overage_capability_raw: Option<String>,
+    ) -> Option<BalanceResponse> {
+        let usage_limit = usage_limit.filter(|v| v.is_finite() && *v >= 0.0)?;
+        let current_usage = current_usage
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(0.0);
+        let remaining = (usage_limit - current_usage).max(0.0);
+        let usage_percentage = if usage_limit > 0.0 {
+            (current_usage / usage_limit * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+
+        Some(BalanceResponse {
+            id,
+            subscription_title,
+            current_usage,
+            usage_limit,
+            remaining,
+            usage_percentage,
+            next_reset_at,
+            queried_at: None,
+            overage_enabled,
+            overage_capable,
+            overage_capability_raw,
+        })
+    }
+
     /// 获取全局余额汇总（仅读缓存，只统计当前仍存在的凭据）。
     pub fn get_balance_summary(&self) -> BalanceSummaryResponse {
         let snapshot = self.token_manager.snapshot();
@@ -525,6 +561,13 @@ impl AdminService {
             .email
             .clone()
             .or_else(|| Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()));
+        let subscription_title = req.subscription_title.clone();
+        let current_usage = req.current_usage;
+        let usage_limit = req.usage_limit;
+        let next_reset_at = req.next_reset_at;
+        let overage_enabled = req.overage_enabled;
+        let overage_capable = req.overage_capable;
+        let overage_capability_raw = req.overage_capability_raw.clone();
         let new_cred = KiroCredentials {
             id: None,
             access_token: req.access_token,
@@ -543,7 +586,7 @@ impl AdminService {
             api_region: req.api_region,
             machine_id: req.machine_id,
             email: email.clone(),
-            subscription_title: None, // 将在首次获取使用额度时自动更新
+            subscription_title: subscription_title.clone(), // 将在首次获取使用额度时自动更新
             account_source: req.account_source,
             account_source_label: req.account_source_label,
             kam_idp: req.kam_idp,
@@ -565,6 +608,24 @@ impl AdminService {
             .add_credential(new_cred)
             .await
             .map_err(|e| self.classify_add_error(e))?;
+
+        if let Some(balance) = Self::balance_from_import_metadata(
+            credential_id,
+            subscription_title,
+            current_usage,
+            usage_limit,
+            next_reset_at,
+            overage_enabled,
+            overage_capable,
+            overage_capability_raw,
+        ) {
+            let cached_balance = Self::cache_balance(balance);
+            {
+                let mut cache = self.balance_cache.lock();
+                cache.insert(credential_id, cached_balance);
+            }
+            self.save_balance_cache();
+        }
 
         // 后台获取订阅等级，避免首次请求时 Free 账号绕过 Opus 模型过滤
         let tm = self.token_manager.clone();

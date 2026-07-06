@@ -2343,6 +2343,7 @@ impl MultiTokenManager {
         validated_cred.api_region = new_cred.api_region;
         validated_cred.machine_id = new_cred.machine_id;
         validated_cred.email = new_cred.email;
+        validated_cred.subscription_title = new_cred.subscription_title;
         validated_cred.account_source = new_cred.account_source;
         validated_cred.account_source_label = new_cred.account_source_label;
         validated_cred.kam_idp = new_cred.kam_idp;

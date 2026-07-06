@@ -148,6 +148,13 @@ export interface AddCredentialRequest {
   apiRegion?: string
   machineId?: string
   email?: string
+  subscriptionTitle?: string
+  currentUsage?: number
+  usageLimit?: number
+  nextResetAt?: number | null
+  overageEnabled?: boolean
+  overageCapable?: boolean
+  overageCapabilityRaw?: string
   accountSource?: string
   accountSourceLabel?: string
   kamIdp?: string

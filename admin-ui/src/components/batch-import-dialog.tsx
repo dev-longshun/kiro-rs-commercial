@@ -44,6 +44,13 @@ interface CredentialInput {
   apiRegion?: string
   priority?: number
   machineId?: string
+  subscriptionTitle?: string
+  currentUsage?: number
+  usageLimit?: number
+  nextResetAt?: number
+  overageEnabled?: boolean
+  overageCapable?: boolean
+  overageCapabilityRaw?: string
 }
 
 interface VerificationResult {
@@ -86,15 +93,34 @@ function textIncludesAny(value: string | undefined, keywords: string[]): boolean
   return keywords.some(keyword => lower.includes(keyword.toLowerCase()))
 }
 
-function isExternalIdpBalanceSoftError(authMethod: string, error: unknown): boolean {
-  if (authMethod !== 'external_idp') return false
+function isBalanceSoftError(error: unknown): boolean {
   const message = extractErrorMessage(error).toLowerCase()
   return (
     message.includes('403') ||
+    message.includes('forbidden') ||
     message.includes('not authorized') ||
+    message.includes('权限不足') ||
+    message.includes('无法获取使用额度') ||
     message.includes('profilearn') ||
     message.includes('accessdenied')
   )
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return value
+}
+
+function importedUsageText(cred: CredentialInput): string {
+  const currentUsage = finiteNumber(cred.currentUsage)
+  const usageLimit = finiteNumber(cred.usageLimit)
+  if (currentUsage !== undefined && usageLimit !== undefined) {
+    return `${currentUsage}/${usageLimit}（导入快照）`
+  }
+  if (usageLimit !== undefined) {
+    return `0/${usageLimit}（导入快照）`
+  }
+  return '已导入，余额稍后同步'
 }
 
 export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps) {
@@ -222,6 +248,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
           const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || cred.idp
+          const exportedRegion = cred.region?.trim() || undefined
           const isExternalIdp =
             textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
             Boolean(explicitTokenEndpoint || inferredIssuerUrl) ||
@@ -250,8 +277,8 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
             accessToken: authMethod === 'external_idp' ? cred.accessToken?.trim() || undefined : undefined,
             refreshToken: token,
             authMethod,
-            authRegion: cred.authRegion?.trim() || cred.region?.trim() || undefined,
-            apiRegion: cred.apiRegion?.trim() || undefined,
+            authRegion: cred.authRegion?.trim() || exportedRegion,
+            apiRegion: cred.apiRegion?.trim() || exportedRegion,
             clientId,
             clientSecret: authMethod === 'idc' ? clientSecret : undefined,
             tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,
@@ -266,6 +293,13 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
             priority: cred.priority || 0,
             machineId: cred.machineId?.trim() || undefined,
             email: cred.email?.trim() || undefined,
+            subscriptionTitle: firstNonEmptyString(cred.subscriptionTitle),
+            currentUsage: finiteNumber(cred.currentUsage),
+            usageLimit: finiteNumber(cred.usageLimit),
+            nextResetAt: finiteNumber(cred.nextResetAt),
+            overageEnabled: cred.overageEnabled,
+            overageCapable: cred.overageCapable,
+            overageCapabilityRaw: firstNonEmptyString(cred.overageCapabilityRaw),
           })
 
           addedCredId = addedCred.credentialId
@@ -278,7 +312,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           try {
             balance = await getCredentialBalance(addedCred.credentialId)
           } catch (balanceError) {
-            if (!isExternalIdpBalanceSoftError(authMethod, balanceError)) {
+            if (!isBalanceSoftError(balanceError)) {
               throw balanceError
             }
 
@@ -290,7 +324,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
               newResults[i] = {
                 ...newResults[i],
                 status: 'verified',
-                usage: '已导入，余额稍后同步',
+                usage: importedUsageText(cred),
                 email: addedCred.email || undefined,
                 credentialId: addedCred.credentialId
               }
