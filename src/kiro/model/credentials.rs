@@ -171,6 +171,12 @@ fn canonicalize_auth_method_value(value: &str) -> &str {
     }
 }
 
+fn option_eq_ignore_ascii_case(value: &Option<String>, expected: &str) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+}
+
 /// 凭据配置（支持单对象或数组格式）
 ///
 /// 自动识别配置文件格式：
@@ -311,6 +317,23 @@ impl KiroCredentials {
             .is_some_and(|m| m.eq_ignore_ascii_case("external_idp"))
     }
 
+    /// 是否为 Kiro 企业身份凭据。
+    ///
+    /// KAM 导出的 Enterprise 账号可能是 `authMethod=IdC`，但调用 Kiro 数据面
+    /// 仍然需要 CodeWhisperer profileArn。这里同时兼容登录流程和 KAM 元数据。
+    pub fn is_enterprise_identity(&self) -> bool {
+        self.is_external_idp()
+            || option_eq_ignore_ascii_case(&self.kam_provider, "Enterprise")
+            || option_eq_ignore_ascii_case(&self.kam_idp, "Enterprise")
+            || option_eq_ignore_ascii_case(&self.account_source, "enterprise")
+            || option_eq_ignore_ascii_case(&self.account_source, "iam_sso")
+    }
+
+    /// 是否需要在运行前解析 profileArn。
+    pub fn needs_profile_arn_resolution(&self) -> bool {
+        self.profile_arn.is_none() && self.is_enterprise_identity()
+    }
+
     /// 获取有效的代理配置
     /// 优先级：凭据代理 > 全局代理 > 无代理
     /// 特殊值 "direct" 表示显式不使用代理（即使全局配置了代理）
@@ -447,6 +470,30 @@ mod tests {
         let list = config.into_sorted_credentials();
         assert_eq!(list[0].auth_method.as_deref(), Some("external_idp"));
         assert!(list[0].is_external_idp());
+    }
+
+    #[test]
+    fn test_kam_enterprise_idc_needs_profile_arn_resolution() {
+        let creds = KiroCredentials {
+            auth_method: Some("idc".to_string()),
+            kam_provider: Some("Enterprise".to_string()),
+            ..Default::default()
+        };
+
+        assert!(creds.is_enterprise_identity());
+        assert!(creds.needs_profile_arn_resolution());
+    }
+
+    #[test]
+    fn test_social_kam_account_does_not_need_profile_arn_resolution() {
+        let creds = KiroCredentials {
+            auth_method: Some("social".to_string()),
+            kam_provider: Some("Github".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!creds.is_enterprise_identity());
+        assert!(!creds.needs_profile_arn_resolution());
     }
 
     #[test]

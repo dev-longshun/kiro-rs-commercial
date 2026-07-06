@@ -284,9 +284,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
             tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,
             issuerUrl: authMethod === 'external_idp' ? externalIdpMetadata.issuerUrl : undefined,
             scopes: authMethod === 'external_idp' ? externalIdpMetadata.scopes : undefined,
-            profileArn: authMethod === 'external_idp'
-              ? firstNonEmptyString(cred.profileArn, cred.profile_arn)
-              : undefined,
+            profileArn: firstNonEmptyString(cred.profileArn, cred.profile_arn),
             expiresAt: authMethod === 'external_idp'
               ? normalizeExpiresAt(firstNonEmptyString(cred.expiresAt, cred.expires_at) ?? cred.expiresAt ?? cred.expires_at)
               : undefined,

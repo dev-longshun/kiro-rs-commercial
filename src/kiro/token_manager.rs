@@ -78,12 +78,19 @@ impl TokenManager {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("没有可用的 accessToken"))?;
 
-        if self.credentials.is_external_idp() && self.credentials.profile_arn.is_none() {
-            let profile_arn =
-                resolve_profile_arn(&self.credentials, &self.config, &token, self.proxy.as_ref())
-                    .await?;
-            tracing::info!("External IdP 单凭据自动获取 profileArn: {}", profile_arn);
-            self.credentials.profile_arn = Some(profile_arn);
+        if self.credentials.needs_profile_arn_resolution() {
+            match resolve_profile_arn(&self.credentials, &self.config, &token, self.proxy.as_ref())
+                .await
+            {
+                Ok(profile_arn) => {
+                    tracing::info!("单凭据自动获取 profileArn: {}", profile_arn);
+                    self.credentials.profile_arn = Some(profile_arn);
+                }
+                Err(err) if !self.credentials.is_external_idp() => {
+                    tracing::warn!("单凭据未能自动获取 profileArn，将继续使用原凭据: {}", err);
+                }
+                Err(err) => return Err(err),
+            }
         }
 
         Ok(token)
@@ -495,6 +502,7 @@ fn push_unique_region(regions: &mut Vec<String>, region: impl AsRef<str>) {
 
 fn should_probe_profile_fallback_regions(credentials: &KiroCredentials) -> bool {
     credentials.is_external_idp()
+        || credentials.needs_profile_arn_resolution()
         || (credentials
             .api_region
             .as_deref()
@@ -554,6 +562,17 @@ fn list_available_profiles_endpoint(region: &str) -> (String, String) {
     (format!("https://{}/", host), host)
 }
 
+fn codewhisperer_list_available_profiles_endpoint(region: &str) -> (String, String) {
+    let region = region.trim();
+    let region = if region.is_empty() {
+        "us-east-1"
+    } else {
+        region
+    };
+    let host = format!("codewhisperer.{}.amazonaws.com", region);
+    (format!("https://{}/ListAvailableProfiles", host), host)
+}
+
 fn is_transient_profile_fetch_error(err: &anyhow::Error) -> bool {
     let msg = format!("{:#}", err);
     if msg.contains("empty profile list") {
@@ -585,6 +604,7 @@ async fn list_available_profiles_in_region(
         "{} KiroIDE-{}-{}",
         USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
     );
+    let body = serde_json::to_string(&serde_json::json!({ "maxResults": 10 }))?;
 
     let client = build_client(proxy, 60, config.tls_backend)?;
     let mut request = client
@@ -592,6 +612,62 @@ async fn list_available_profiles_in_region(
         .header("Accept", "application/x-amz-json-1.0")
         .header("Content-Type", "application/x-amz-json-1.0")
         .header("x-amz-target", LIST_AVAILABLE_PROFILES_TARGET)
+        .header("x-amz-user-agent", &amz_user_agent)
+        .header("User-Agent", &user_agent)
+        .header("host", &host)
+        .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
+        .header("amz-sdk-request", "attempt=1; max=1")
+        .header("x-amzn-kiro-agent-mode", "vibe")
+        .header("x-amzn-codewhisperer-optout", "true")
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Connection", "close")
+        .body(body);
+
+    if credentials.is_external_idp() {
+        request = request.header("TokenType", "EXTERNAL_IDP");
+    }
+
+    let response = request.send().await?;
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("HTTP {}: {}", status.as_u16(), body_text);
+    }
+
+    let data: ListAvailableProfilesResponse = serde_json::from_str(&body_text)?;
+    data.profiles
+        .into_iter()
+        .map(|p| p.arn.trim().to_string())
+        .find(|arn| !arn.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("empty profile list"))
+}
+
+async fn list_available_profiles_codewhisperer_in_region(
+    credentials: &KiroCredentials,
+    config: &Config,
+    token: &str,
+    proxy: Option<&ProxyConfig>,
+    region: &str,
+) -> anyhow::Result<String> {
+    let (url, host) = codewhisperer_list_available_profiles_endpoint(region);
+    let machine_id = machine_id::generate_from_credentials(credentials, config)
+        .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
+    let kiro_version = &config.kiro_version;
+    let user_agent = format!(
+        "aws-sdk-js/1.0.0 ua/2.1 os/{} lang/js md/nodejs#{} \
+         api/codewhispererruntime#1.0.0 m/N,E KiroIDE-{}-{}",
+        config.system_version, config.node_version, kiro_version, machine_id
+    );
+    let amz_user_agent = format!(
+        "{} KiroIDE-{}-{}",
+        USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
+    );
+
+    let client = build_client(proxy, 60, config.tls_backend)?;
+    let mut request = client
+        .post(&url)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
         .header("x-amz-user-agent", &amz_user_agent)
         .header("User-Agent", &user_agent)
         .header("host", &host)
@@ -646,14 +722,77 @@ async fn list_available_profiles_with_retry_in_region(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("profileArn 查询失败")))
 }
 
+async fn list_available_profiles_codewhisperer_with_retry_in_region(
+    credentials: &KiroCredentials,
+    config: &Config,
+    token: &str,
+    proxy: Option<&ProxyConfig>,
+    region: &str,
+) -> anyhow::Result<String> {
+    let mut last_error = None;
+    for attempt in 1..=3 {
+        match list_available_profiles_codewhisperer_in_region(
+            credentials,
+            config,
+            token,
+            proxy,
+            region,
+        )
+        .await
+        {
+            Ok(profile_arn) => return Ok(profile_arn),
+            Err(err) => {
+                let transient = is_transient_profile_fetch_error(&err);
+                last_error = Some(err);
+                if !transient || attempt == 3 {
+                    break;
+                }
+                tokio::time::sleep(StdDuration::from_millis(200 * attempt as u64)).await;
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("profileArn 查询失败")))
+}
+
 async fn resolve_profile_arn(
     credentials: &KiroCredentials,
     config: &Config,
     token: &str,
     proxy: Option<&ProxyConfig>,
 ) -> anyhow::Result<String> {
-    let mut last_error = None;
-    for region in profile_region_candidates(credentials, config) {
+    let region_candidates = profile_region_candidates(credentials, config);
+
+    if credentials.is_enterprise_identity() && !credentials.is_external_idp() {
+        for region in &region_candidates {
+            match list_available_profiles_codewhisperer_with_retry_in_region(
+                credentials,
+                config,
+                token,
+                proxy,
+                region,
+            )
+            .await
+            {
+                Ok(profile_arn) => {
+                    tracing::info!(
+                        "KAM Enterprise profileArn 探测命中 region={}: {}",
+                        region,
+                        profile_arn
+                    );
+                    return Ok(profile_arn);
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        "CodeWhisperer ListAvailableProfiles 在 region={} 未命中: {}",
+                        region,
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    for region in region_candidates {
         match list_available_profiles_with_retry_in_region(
             credentials,
             config,
@@ -673,12 +812,39 @@ async fn resolve_profile_arn(
             }
             Err(err) => {
                 tracing::debug!("ListAvailableProfiles 在 region={} 未命中: {}", region, err);
-                last_error = Some(err);
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no available Kiro profile")))
+    match profile_arn_from_token_refresh(credentials, config, proxy).await {
+        Ok(profile_arn) => {
+            tracing::info!("刷新 Token 响应获取 profileArn: {}", profile_arn);
+            return Ok(profile_arn);
+        }
+        Err(err) => {
+            tracing::debug!("刷新 Token 响应未能提供 profileArn: {}", err);
+            Err(anyhow::anyhow!("no available Kiro profile: {}", err))
+        }
+    }
+}
+
+fn extract_refreshed_profile_arn(credentials: &KiroCredentials) -> anyhow::Result<String> {
+    credentials
+        .profile_arn
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile_arn| !profile_arn.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("refresh response did not include profileArn"))
+}
+
+async fn profile_arn_from_token_refresh(
+    credentials: &KiroCredentials,
+    config: &Config,
+    proxy: Option<&ProxyConfig>,
+) -> anyhow::Result<String> {
+    let refreshed = refresh_token(credentials, config, proxy).await?;
+    extract_refreshed_profile_arn(&refreshed)
 }
 
 /// 获取使用额度信息
@@ -1370,15 +1536,15 @@ impl MultiTokenManager {
         }
     }
 
-    /// External IdP 登录不会在刷新响应里返回 profileArn，需要首次使用时通过
+    /// 企业身份登录不会总是在刷新响应里返回 profileArn，需要首次使用时通过
     /// ListAvailableProfiles 拉取并写回凭据文件。
-    async fn ensure_external_idp_profile_arn(
+    async fn ensure_profile_arn(
         &self,
         id: u64,
         credentials: KiroCredentials,
         token: &str,
     ) -> anyhow::Result<KiroCredentials> {
-        if !credentials.is_external_idp() || credentials.profile_arn.is_some() {
+        if !credentials.needs_profile_arn_resolution() {
             return Ok(credentials);
         }
 
@@ -1396,8 +1562,20 @@ impl MultiTokenManager {
 
         let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
         let profile_arn =
-            resolve_profile_arn(&credentials, &self.config, token, effective_proxy.as_ref())
-                .await?;
+            match resolve_profile_arn(&credentials, &self.config, token, effective_proxy.as_ref())
+                .await
+            {
+                Ok(profile_arn) => profile_arn,
+                Err(err) if !credentials.is_external_idp() => {
+                    tracing::warn!(
+                        "Enterprise 凭据 #{} 未能自动获取 profileArn，将继续使用原凭据: {}",
+                        id,
+                        err
+                    );
+                    return Ok(credentials);
+                }
+                Err(err) => return Err(err),
+            };
 
         let mut updated = credentials;
         updated.profile_arn = Some(profile_arn.clone());
@@ -1410,14 +1588,10 @@ impl MultiTokenManager {
         }
 
         if let Err(e) = self.persist_credentials() {
-            tracing::warn!("External IdP 凭据自动获取 profileArn 后持久化失败: {}", e);
+            tracing::warn!("凭据自动获取 profileArn 后持久化失败: {}", e);
         }
 
-        tracing::info!(
-            "External IdP 凭据 #{} 自动获取 profileArn: {}",
-            id,
-            profile_arn
-        );
+        tracing::info!("凭据 #{} 自动获取 profileArn: {}", id, profile_arn);
         Ok(updated)
     }
 
@@ -1504,9 +1678,7 @@ impl MultiTokenManager {
             .access_token
             .clone()
             .ok_or_else(|| anyhow::anyhow!("没有可用的 accessToken"))?;
-        let creds = self
-            .ensure_external_idp_profile_arn(id, creds, &token)
-            .await?;
+        let creds = self.ensure_profile_arn(id, creds, &token).await?;
 
         Ok(CallContext {
             id,
@@ -2132,9 +2304,7 @@ impl MultiTokenManager {
                 .map(|e| e.credentials.clone())
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
-        let credentials = self
-            .ensure_external_idp_profile_arn(id, credentials, &token)
-            .await?;
+        let credentials = self.ensure_profile_arn(id, credentials, &token).await?;
 
         let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
         let usage_limits =
@@ -2244,9 +2414,7 @@ impl MultiTokenManager {
                 .map(|e| e.credentials.clone())
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
-        let credentials = self
-            .ensure_external_idp_profile_arn(id, credentials, &token)
-            .await?;
+        let credentials = self.ensure_profile_arn(id, credentials, &token).await?;
 
         let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
         set_user_preference(
@@ -2338,6 +2506,9 @@ impl MultiTokenManager {
         validated_cred.token_endpoint = new_cred.token_endpoint;
         validated_cred.issuer_url = new_cred.issuer_url;
         validated_cred.scopes = new_cred.scopes;
+        if validated_cred.profile_arn.is_none() {
+            validated_cred.profile_arn = new_cred.profile_arn;
+        }
         validated_cred.region = new_cred.region;
         validated_cred.auth_region = new_cred.auth_region;
         validated_cred.api_region = new_cred.api_region;
@@ -3028,6 +3199,29 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_region_candidates_enterprise_idc_probe_fallbacks_with_region() {
+        let config = Config::default();
+        let credentials = KiroCredentials {
+            auth_method: Some("idc".to_string()),
+            kam_provider: Some("Enterprise".to_string()),
+            region: Some("us-east-1".to_string()),
+            ..Default::default()
+        };
+
+        let regions = profile_region_candidates(&credentials, &config);
+
+        assert_eq!(regions, vec!["us-east-1", "eu-central-1"]);
+    }
+
+    #[test]
+    fn test_q_list_available_profiles_endpoint_uses_json_rpc_root() {
+        let (url, host) = list_available_profiles_endpoint(" eu-central-1 ");
+
+        assert_eq!(url, "https://q.eu-central-1.amazonaws.com/");
+        assert_eq!(host, "q.eu-central-1.amazonaws.com");
+    }
+
+    #[test]
     fn test_sha256_hex() {
         let result = sha256_hex("test");
         assert_eq!(
@@ -3051,6 +3245,33 @@ mod tests {
         let result = manager.add_credential(duplicate).await;
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("凭据已存在"));
+    }
+
+    #[test]
+    fn test_extract_refreshed_profile_arn_trims_value() {
+        let mut credentials = KiroCredentials::default();
+        credentials.profile_arn =
+            Some(" arn:aws:codewhisperer:us-east-1:123456789012:profile/test ".to_string());
+
+        let got = extract_refreshed_profile_arn(&credentials).unwrap();
+
+        assert_eq!(
+            got,
+            "arn:aws:codewhisperer:us-east-1:123456789012:profile/test"
+        );
+    }
+
+    #[test]
+    fn test_extract_refreshed_profile_arn_rejects_missing_value() {
+        let mut credentials = KiroCredentials::default();
+        credentials.profile_arn = Some("  ".to_string());
+
+        let err = extract_refreshed_profile_arn(&credentials)
+            .err()
+            .unwrap()
+            .to_string();
+
+        assert!(err.contains("profileArn"));
     }
 
     // MultiTokenManager 测试
