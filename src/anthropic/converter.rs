@@ -247,6 +247,16 @@ pub fn map_model(model: &str) -> Option<String> {
         }
     } else if model_lower.contains("qwen") {
         Some("qwen3-coder-next".to_string())
+    } else if model_lower.contains("gpt") {
+        if model_lower.contains("sol") {
+            Some("gpt-5.6-sol".to_string())
+        } else if model_lower.contains("terra") {
+            Some("gpt-5.6-terra".to_string())
+        } else if model_lower.contains("luna") {
+            Some("gpt-5.6-luna".to_string())
+        } else {
+            None
+        }
     } else {
         None
     }
