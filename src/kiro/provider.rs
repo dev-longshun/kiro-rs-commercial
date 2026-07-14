@@ -420,9 +420,14 @@ impl KiroProvider {
                 Err(e) => {
                     let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
-                        "MCP 请求发送失败（尝试 {}/{}）: {}",
-                        attempt + 1,
+                        credential_id = ctx.id,
+                        email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                        target_url = %url,
+                        proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                        attempt = attempt + 1,
                         max_retries,
+                        error_kind,
+                        "MCP 请求发送失败（网络错误）: {}",
                         e
                     );
                     self.emit_event(
@@ -519,9 +524,13 @@ impl KiroProvider {
             // 429 Too Many Requests - 限流：递增 success_count 让 Least-Used 算法轮转到下一个凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "MCP 请求失败（上游限流，切换凭据重试，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    attempt = attempt + 1,
                     max_retries,
+                    "MCP 请求失败（上游限流，切换凭据重试）: {} {}",
                     status,
                     body
                 );
@@ -554,9 +563,13 @@ impl KiroProvider {
             // 408/5xx - 瞬态上游错误
             if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
-                    "MCP 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    attempt = attempt + 1,
                     max_retries,
+                    "MCP 请求失败（上游瞬态错误）: {} {}",
                     status,
                     body
                 );
@@ -658,9 +671,16 @@ impl KiroProvider {
                 Err(e) => {
                     let error_kind = Self::classify_network_error(&e);
                     tracing::warn!(
-                        "API 请求发送失败（尝试 {}/{}）: {}",
-                        attempt + 1,
+                        credential_id = ctx.id,
+                        email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                        model = model.as_deref().unwrap_or("-"),
+                        target_url = %url,
+                        proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                        is_stream,
+                        attempt = attempt + 1,
                         max_retries,
+                        error_kind,
+                        "API 请求发送失败（网络错误）: {}",
                         e
                     );
                     // 网络错误通常是上游/链路瞬态问题，不应导致"禁用凭据"或"切换凭据"
@@ -705,9 +725,15 @@ impl KiroProvider {
             // 402 Payment Required 且额度用尽：禁用凭据并故障转移
             if status.as_u16() == 402 && Self::is_monthly_request_limit(&body) {
                 tracing::warn!(
-                    "API 请求失败（额度已用尽，禁用凭据并切换，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    model = model.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    is_stream,
+                    attempt = attempt + 1,
                     max_retries,
+                    "API 请求失败（额度已用尽，禁用凭据并切换）: {} {}",
                     status,
                     body
                 );
@@ -758,9 +784,15 @@ impl KiroProvider {
             // 401/403 - 更可能是凭据/权限问题：计入失败并允许故障转移
             if matches!(status.as_u16(), 401 | 403) {
                 tracing::warn!(
-                    "API 请求失败（可能为凭据错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    model = model.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    is_stream,
+                    attempt = attempt + 1,
                     max_retries,
+                    "API 请求失败（凭据/权限错误）: {} {}",
                     status,
                     body
                 );
@@ -797,9 +829,15 @@ impl KiroProvider {
             // 429 Too Many Requests - 限流：递增 success_count 让 Least-Used 算法轮转到下一个凭据
             if status.as_u16() == 429 {
                 tracing::warn!(
-                    "API 请求失败（上游限流，切换凭据重试，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    model = model.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    is_stream,
+                    attempt = attempt + 1,
                     max_retries,
+                    "API 请求失败（上游限流，切换凭据重试）: {} {}",
                     status,
                     body
                 );
@@ -839,9 +877,15 @@ impl KiroProvider {
             // （避免 502 high load 等瞬态错误把所有凭据锁死）
             if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
-                    "API 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
-                    attempt + 1,
+                    credential_id = ctx.id,
+                    email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                    model = model.as_deref().unwrap_or("-"),
+                    target_url = %url,
+                    proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                    is_stream,
+                    attempt = attempt + 1,
                     max_retries,
+                    "API 请求失败（上游瞬态错误）: {} {}",
                     status,
                     body
                 );
@@ -884,9 +928,15 @@ impl KiroProvider {
 
             // 兜底：当作可重试的瞬态错误处理（不切换凭据）
             tracing::warn!(
-                "API 请求失败（未知错误，尝试 {}/{}）: {} {}",
-                attempt + 1,
+                credential_id = ctx.id,
+                email = ctx.credentials.email.as_deref().unwrap_or("-"),
+                model = model.as_deref().unwrap_or("-"),
+                target_url = %url,
+                proxy = proxy_info.name.as_deref().unwrap_or("-"),
+                is_stream,
+                attempt = attempt + 1,
                 max_retries,
+                "API 请求失败（未知错误）: {} {}",
                 status,
                 body
             );
