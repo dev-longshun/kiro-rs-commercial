@@ -46,6 +46,11 @@ import type { AddProxyRequest, ExitIpResult, ProxyPoolEntry, UpdateProxyRequest 
 const selectClass =
   'h-9 rounded-sm border-[2.5px] border-border bg-background px-2 text-sm shadow-nb-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
+type ProxyProtocol = 'http' | 'https' | 'socks5'
+
+const PROXY_PROTOCOLS: ProxyProtocol[] = ['http', 'https', 'socks5']
+const DEFAULT_PROXY_PROTOCOL: ProxyProtocol = 'socks5'
+
 function splitTags(value: string) {
   return value
     .split(',')
@@ -59,26 +64,52 @@ function formatDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN')
 }
 
-function parseProxyInput(raw: string): Pick<AddProxyRequest, 'url' | 'username' | 'password'> | null {
+function detectProxyProtocol(url?: string | null): ProxyProtocol {
+  if (!url) return DEFAULT_PROXY_PROTOCOL
+  if (url.startsWith('socks5://')) return 'socks5'
+  if (url.startsWith('https://')) return 'https'
+  if (url.startsWith('http://')) return 'http'
+  return DEFAULT_PROXY_PROTOCOL
+}
+
+function withProxyProtocol(url: string, protocol: ProxyProtocol): string {
+  const stripped = url.replace(/^(https?|socks5):\/\//i, '')
+  if (!stripped) return url
+  return `${protocol}://${stripped}`
+}
+
+function protocolHintForFailure(url?: string | null, lastError?: string | null): string {
+  if (!url?.startsWith('http://') || !lastError) return ''
+  return '（若代理商标注 SOCKS5，请将协议改为 socks5:// 后重试）'
+}
+
+/** 解析代理输入；无协议时使用 defaultProtocol，有协议时以输入为准 */
+function parseProxyInput(
+  raw: string,
+  defaultProtocol: ProxyProtocol = DEFAULT_PROXY_PROTOCOL
+): (Pick<AddProxyRequest, 'url' | 'username' | 'password'> & { protocol: ProxyProtocol }) | null {
   const value = raw.trim()
   if (!value) return null
 
-  const protocolMatch = value.match(/^(https?|socks5):\/\/(?:([^:]+):([^@]+)@)?(.+)$/)
+  const protocolMatch = value.match(/^(https?|socks5):\/\/(?:([^:]+):([^@]+)@)?(.+)$/i)
   if (protocolMatch) {
-    const [, protocol, username, password, hostPort] = protocolMatch
+    const [, protocolRaw, username, password, hostPort] = protocolMatch
+    const protocol = protocolRaw.toLowerCase() as ProxyProtocol
     return {
       url: `${protocol}://${hostPort}`,
       username: username || undefined,
       password: password || undefined,
+      protocol,
     }
   }
 
   const parts = value.split(':')
   if (parts.length === 4 && /^\d+$/.test(parts[1])) {
     return {
-      url: `http://${parts[0]}:${parts[1]}`,
+      url: `${defaultProtocol}://${parts[0]}:${parts[1]}`,
       username: parts[2],
       password: parts[3],
+      protocol: defaultProtocol,
     }
   }
 
@@ -86,17 +117,29 @@ function parseProxyInput(raw: string): Pick<AddProxyRequest, 'url' | 'username' 
   if (authMatch) {
     const [, username, password, hostPort] = authMatch
     return {
-      url: `http://${hostPort}`,
+      url: `${defaultProtocol}://${hostPort}`,
       username,
       password,
+      protocol: defaultProtocol,
     }
   }
 
   if (parts.length === 2 && /^\d+$/.test(parts[1])) {
-    return { url: `http://${value}` }
+    return {
+      url: `${defaultProtocol}://${value}`,
+      protocol: defaultProtocol,
+    }
   }
 
-  return { url: value }
+  // 裸 host 或其它格式：仍套上所选协议，避免后端拿到无 scheme 的 URL
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    return {
+      url: `${defaultProtocol}://${value}`,
+      protocol: defaultProtocol,
+    }
+  }
+
+  return { url: value, protocol: detectProxyProtocol(value) }
 }
 
 export function ProxyPoolPanel() {
@@ -104,8 +147,10 @@ export function ProxyPoolPanel() {
   const [editEntry, setEditEntry] = useState<ProxyPoolEntry | null>(null)
   const [addForm, setAddForm] = useState<AddProxyRequest>({ name: '', url: '', tags: [] })
   const [addTags, setAddTags] = useState('')
+  const [addProtocol, setAddProtocol] = useState<ProxyProtocol>(DEFAULT_PROXY_PROTOCOL)
   const [editForm, setEditForm] = useState<UpdateProxyRequest>({})
   const [editTags, setEditTags] = useState('')
+  const [editProtocol, setEditProtocol] = useState<ProxyProtocol>(DEFAULT_PROXY_PROTOCOL)
   const [thresholdMs, setThresholdMs] = useState('800')
   const [bindingCredentialId, setBindingCredentialId] = useState('')
   const [bindingTarget, setBindingTarget] = useState('')
@@ -140,15 +185,42 @@ export function ProxyPoolPanel() {
   const resetAddForm = () => {
     setAddForm({ name: '', url: '', tags: [] })
     setAddTags('')
+    setAddProtocol(DEFAULT_PROXY_PROTOCOL)
   }
 
   const handleProxyUrlInput = (value: string, mode: 'add' | 'edit') => {
-    const parsed = parseProxyInput(value)
-    if (!parsed) return
+    const protocol = mode === 'add' ? addProtocol : editProtocol
+    const parsed = parseProxyInput(value, protocol)
+    if (!parsed) {
+      if (mode === 'add') {
+        setAddForm((current) => ({ ...current, url: value, username: undefined, password: undefined }))
+      } else {
+        setEditForm((current) => ({ ...current, url: value }))
+      }
+      return
+    }
+
+    const { protocol: detectedProtocol, ...fields } = parsed
     if (mode === 'add') {
-      setAddForm((current) => ({ ...current, ...parsed }))
+      setAddProtocol(detectedProtocol)
+      setAddForm((current) => ({ ...current, ...fields }))
     } else {
-      setEditForm((current) => ({ ...current, ...parsed }))
+      setEditProtocol(detectedProtocol)
+      setEditForm((current) => ({ ...current, ...fields }))
+    }
+  }
+
+  const handleProtocolChange = (protocol: ProxyProtocol, mode: 'add' | 'edit') => {
+    if (mode === 'add') {
+      setAddProtocol(protocol)
+      setAddForm((current) =>
+        current.url ? { ...current, url: withProxyProtocol(current.url, protocol) } : current
+      )
+    } else {
+      setEditProtocol(protocol)
+      setEditForm((current) =>
+        current.url ? { ...current, url: withProxyProtocol(current.url, protocol) } : current
+      )
     }
   }
 
@@ -157,8 +229,9 @@ export function ProxyPoolPanel() {
       toast.error('名称和 URL 不能为空')
       return
     }
+    const url = withProxyProtocol(addForm.url.trim(), addProtocol)
     addProxy.mutate(
-      { ...addForm, tags: splitTags(addTags) },
+      { ...addForm, url, tags: splitTags(addTags) },
       {
         onSuccess: () => {
           toast.success('代理已添加')
@@ -172,6 +245,7 @@ export function ProxyPoolPanel() {
 
   const openEdit = (entry: ProxyPoolEntry) => {
     setEditEntry(entry)
+    setEditProtocol(detectProxyProtocol(entry.url))
     setEditForm({
       name: entry.name,
       url: entry.url,
@@ -183,11 +257,16 @@ export function ProxyPoolPanel() {
 
   const handleEdit = () => {
     if (!editEntry) return
+    const url =
+      typeof editForm.url === 'string' && editForm.url.trim()
+        ? withProxyProtocol(editForm.url.trim(), editProtocol)
+        : editForm.url
     updateProxy.mutate(
       {
         id: editEntry.id,
         data: {
           ...editForm,
+          url,
           tags: splitTags(editTags),
           password: typeof editForm.password === 'string' && editForm.password.length > 0 ? editForm.password : undefined,
         },
@@ -375,7 +454,12 @@ export function ProxyPoolPanel() {
                       <span>延迟: {proxy.latencyMs != null ? `${proxy.latencyMs}ms` : '-'}</span>
                       <span>出口: {proxy.exitIp || '-'}</span>
                       <span>检测: {formatDate(proxy.lastCheckedAt)}</span>
-                      {proxy.lastError && <span className="text-nb-red">错误: {proxy.lastError}</span>}
+                      {proxy.lastError && (
+                        <span className="text-nb-red">
+                          错误: {proxy.lastError}
+                          {protocolHintForFailure(proxy.url, proxy.lastError)}
+                        </span>
+                      )}
                     </div>
                     {proxy.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1">
@@ -403,8 +487,13 @@ export function ProxyPoolPanel() {
                       onClick={() => {
                         checkProxy.mutate(proxy.id, {
                           onSuccess: (result) => {
-                            toast[result.healthy ? 'success' : 'error'](
-                              result.healthy ? `检测通过 ${result.latencyMs ?? '-'}ms` : '检测失败'
+                            if (result.healthy) {
+                              toast.success(`检测通过 ${result.latencyMs ?? '-'}ms`)
+                              return
+                            }
+                            const hint = protocolHintForFailure(result.url, result.lastError)
+                            toast.error(
+                              `检测失败${result.lastError ? `: ${result.lastError}` : ''}${hint}`
                             )
                           },
                           onError: (error) => toast.error(`检测失败: ${extractErrorMessage(error)}`),
@@ -502,11 +591,27 @@ export function ProxyPoolPanel() {
               value={addForm.name}
               onChange={(event) => setAddForm((current) => ({ ...current, name: event.target.value }))}
             />
-            <Input
-              placeholder="URL / user:pass@host:port / host:port:user:pass"
-              value={addForm.url}
-              onChange={(event) => handleProxyUrlInput(event.target.value, 'add')}
-            />
+            <div className="grid gap-2 sm:grid-cols-[140px_minmax(0,1fr)]">
+              <select
+                className={selectClass}
+                value={addProtocol}
+                onChange={(event) => handleProtocolChange(event.target.value as ProxyProtocol, 'add')}
+              >
+                {PROXY_PROTOCOLS.map((protocol) => (
+                  <option key={protocol} value={protocol}>
+                    {protocol.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+              <Input
+                placeholder="host:port / host:port:user:pass / socks5://..."
+                value={addForm.url}
+                onChange={(event) => handleProxyUrlInput(event.target.value, 'add')}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              无协议时默认使用上方协议。住宅/跨境代理多为 SOCKS5，勿误选 HTTP。
+            </p>
             <div className="grid gap-2 sm:grid-cols-2">
               <Input
                 placeholder="用户名"
@@ -540,11 +645,27 @@ export function ProxyPoolPanel() {
               value={editForm.name || ''}
               onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
             />
-            <Input
-              placeholder="URL"
-              value={editForm.url || ''}
-              onChange={(event) => handleProxyUrlInput(event.target.value, 'edit')}
-            />
+            <div className="grid gap-2 sm:grid-cols-[140px_minmax(0,1fr)]">
+              <select
+                className={selectClass}
+                value={editProtocol}
+                onChange={(event) => handleProtocolChange(event.target.value as ProxyProtocol, 'edit')}
+              >
+                {PROXY_PROTOCOLS.map((protocol) => (
+                  <option key={protocol} value={protocol}>
+                    {protocol.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+              <Input
+                placeholder="URL"
+                value={editForm.url || ''}
+                onChange={(event) => handleProxyUrlInput(event.target.value, 'edit')}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              若检测异常且代理商标注 SOCKS5，请将协议改为 SOCKS5 后保存再检测。
+            </p>
             <div className="grid gap-2 sm:grid-cols-2">
               <Input
                 placeholder="用户名"

@@ -295,6 +295,9 @@ pub async fn chat_completions(
                     format!("Model '{}' is not supported", model)
                 }
                 ConversionError::EmptyMessages => "Messages cannot be empty".to_string(),
+                ConversionError::InvalidImage(message) => {
+                    format!("Image format is unsupported or invalid: {}", message)
+                }
             };
             return openai_error_response(StatusCode::BAD_REQUEST, message);
         }

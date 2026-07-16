@@ -40,6 +40,10 @@ interface KamAccount {
     expiresAt?: string | number
     expires_at?: string | number
     region?: string
+    authRegion?: string
+    auth_region?: string
+    apiRegion?: string
+    api_region?: string
     authMethod?: string
     startUrl?: string
     provider?: string
@@ -212,6 +216,10 @@ function normalizeToKamAccount(item: unknown): unknown {
       expiresAt,
       expires_at,
       region,
+      authRegion,
+      auth_region,
+      apiRegion,
+      api_region,
       authMethod,
       startUrl,
       provider,
@@ -235,6 +243,10 @@ function normalizeToKamAccount(item: unknown): unknown {
         expiresAt,
         expires_at,
         region,
+        authRegion,
+        auth_region,
+        apiRegion,
+        api_region,
         authMethod,
         startUrl,
         provider,
@@ -413,6 +425,8 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
           const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || account.idp
           const exportedRegion = cred.region?.trim() || undefined
+          const exportedAuthRegion = firstNonEmptyString(cred.authRegion, cred.auth_region, exportedRegion)
+          const exportedApiRegion = firstNonEmptyString(cred.apiRegion, cred.api_region, exportedRegion)
           const isExternalIdp =
             textIncludesAny(rawAuthMethod, ['external_idp', 'external-idp', 'externalidp']) ||
             Boolean(explicitTokenEndpoint || inferredIssuerUrl) ||
@@ -441,8 +455,8 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
             accessToken: authMethod === 'external_idp' ? cred.accessToken?.trim() || undefined : undefined,
             refreshToken: token,
             authMethod,
-            authRegion: exportedRegion,
-            apiRegion: exportedRegion,
+            authRegion: exportedAuthRegion,
+            apiRegion: exportedApiRegion,
             clientId,
             clientSecret: authMethod === 'idc' ? clientSecret : undefined,
             tokenEndpoint: authMethod === 'external_idp' ? externalIdpMetadata.tokenEndpoint : undefined,

@@ -567,6 +567,10 @@ pub async fn post_messages(
                 ConversionError::EmptyMessages => {
                     ("invalid_request_error", "消息列表为空".to_string())
                 }
+                ConversionError::InvalidImage(message) => (
+                    "invalid_request_error",
+                    format!("图片格式不支持或无法解析: {}", message),
+                ),
             };
             tracing::warn!("请求转换失败: {}", e);
             return (
@@ -1107,6 +1111,10 @@ pub async fn post_messages_cc(
                 ConversionError::EmptyMessages => {
                     ("invalid_request_error", "消息列表为空".to_string())
                 }
+                ConversionError::InvalidImage(message) => (
+                    "invalid_request_error",
+                    format!("图片格式不支持或无法解析: {}", message),
+                ),
             };
             tracing::warn!("请求转换失败: {}", e);
             return (

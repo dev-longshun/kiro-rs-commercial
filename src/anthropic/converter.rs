@@ -274,6 +274,7 @@ pub struct ConversionResult {
 pub enum ConversionError {
     UnsupportedModel(String),
     EmptyMessages,
+    InvalidImage(String),
 }
 
 impl std::fmt::Display for ConversionError {
@@ -281,6 +282,9 @@ impl std::fmt::Display for ConversionError {
         match self {
             ConversionError::UnsupportedModel(model) => write!(f, "模型不支持: {}", model),
             ConversionError::EmptyMessages => write!(f, "消息列表为空"),
+            ConversionError::InvalidImage(message) => {
+                write!(f, "图片格式不支持或无法解析: {}", message)
+            }
         }
     }
 }
@@ -487,9 +491,9 @@ fn process_message_content(
                         }
                         "image" => {
                             if let Some(source) = block.source {
-                                if let Some(format) = get_image_format(&source.media_type) {
-                                    images.push(KiroImage::from_base64(format, source.data));
-                                }
+                                let (fmt, data) =
+                                    normalize_image_for_upstream(&source.media_type, &source.data)?;
+                                images.push(KiroImage::from_base64(fmt, data));
                             }
                         }
                         "document" => {
@@ -792,6 +796,267 @@ fn get_image_format(media_type: &str) -> Option<String> {
         "image/webp" => Some("webp".to_string()),
         _ => None,
     }
+}
+
+const IMAGE_MAX_DIMENSION: u32 = 2048;
+const IMAGE_JPEG_QUALITY: u8 = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SniffedImageFormat {
+    Jpeg,
+    Png,
+    Gif,
+    Webp,
+    Bmp,
+    Tiff,
+    Ico,
+    Heic,
+    Heif,
+    Avif,
+    Svg,
+    Pdf,
+    Unknown,
+}
+
+impl SniffedImageFormat {
+    fn label(self) -> &'static str {
+        match self {
+            SniffedImageFormat::Jpeg => "jpeg",
+            SniffedImageFormat::Png => "png",
+            SniffedImageFormat::Gif => "gif",
+            SniffedImageFormat::Webp => "webp",
+            SniffedImageFormat::Bmp => "bmp",
+            SniffedImageFormat::Tiff => "tiff",
+            SniffedImageFormat::Ico => "ico",
+            SniffedImageFormat::Heic => "heic",
+            SniffedImageFormat::Heif => "heif",
+            SniffedImageFormat::Avif => "avif",
+            SniffedImageFormat::Svg => "svg",
+            SniffedImageFormat::Pdf => "pdf",
+            SniffedImageFormat::Unknown => "unknown",
+        }
+    }
+
+    fn kiro_format(self) -> Option<&'static str> {
+        match self {
+            SniffedImageFormat::Jpeg => Some("jpeg"),
+            SniffedImageFormat::Png => Some("png"),
+            SniffedImageFormat::Gif => Some("gif"),
+            SniffedImageFormat::Webp => Some("webp"),
+            _ => None,
+        }
+    }
+}
+
+fn normalize_image_for_upstream(
+    media_type: &str,
+    base64_data: &str,
+) -> Result<(String, String), ConversionError> {
+    let declared_format = get_image_format(media_type);
+    let (raw_bytes, base64_cleaned) = decode_base64_image_data(base64_data)?;
+    if raw_bytes.is_empty() {
+        return Err(ConversionError::InvalidImage(
+            "图片数据为空，请上传 JPEG/PNG/GIF/WebP 图片".to_string(),
+        ));
+    }
+
+    let sniffed = sniff_image_format(&raw_bytes);
+    let img = image::load_from_memory(&raw_bytes).map_err(|e| {
+        ConversionError::InvalidImage(format!(
+            "media_type={}, detected={}, decode_error={}. 请先将图片转换为 JPEG 或 PNG 后重试；HEIC/HEIF/RAW/SVG 等格式不能直接发送给 Claude/Bedrock。",
+            media_type,
+            sniffed.label(),
+            e
+        ))
+    })?;
+
+    let original_width = img.width();
+    let original_height = img.height();
+    let img = if original_width > IMAGE_MAX_DIMENSION || original_height > IMAGE_MAX_DIMENSION {
+        img.resize(
+            IMAGE_MAX_DIMENSION,
+            IMAGE_MAX_DIMENSION,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        img
+    };
+    let resized = original_width != img.width() || original_height != img.height();
+
+    let has_transparency = image_contains_transparency(&img);
+    let (target_format, encoded_bytes) = if has_transparency {
+        encode_png_image(&img)?
+    } else {
+        encode_jpeg_image(&img)?
+    };
+
+    let output_base64 = base64::engine::general_purpose::STANDARD.encode(&encoded_bytes);
+    let declared = declared_format.as_deref().unwrap_or("unsupported");
+    tracing::info!(
+        declared_media_type = %media_type,
+        declared_format = declared,
+        detected_format = sniffed.label(),
+        target_format = %target_format,
+        original_size_kb = raw_bytes.len() / 1024,
+        output_size_kb = encoded_bytes.len() / 1024,
+        original_dimensions = format!("{}x{}", original_width, original_height),
+        output_dimensions = format!("{}x{}", img.width(), img.height()),
+        resized,
+        base64_cleaned,
+        "图片已预处理为 Bedrock 兼容格式"
+    );
+
+    if let (Some(actual), Some(declared)) = (sniffed.kiro_format(), declared_format.as_deref()) {
+        if actual != declared {
+            tracing::warn!(
+                declared_media_type = %media_type,
+                declared_format = declared,
+                detected_format = actual,
+                "图片 media_type 与真实文件头不一致，已按真实内容重新编码"
+            );
+        }
+    }
+
+    Ok((target_format, output_base64))
+}
+
+fn decode_base64_image_data(data: &str) -> Result<(Vec<u8>, bool), ConversionError> {
+    let (body, had_data_url_prefix) = strip_data_url_prefix(data);
+    let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let removed_whitespace = compact.len() != body.len();
+    let bytes = decode_base64_variants(&compact).map_err(|e| {
+        ConversionError::InvalidImage(format!(
+            "base64 解码失败: {}。请确认 data 字段只包含纯 base64，不要包含 data:image/...;base64, 前缀。",
+            e
+        ))
+    })?;
+    Ok((bytes, had_data_url_prefix || removed_whitespace))
+}
+
+fn strip_data_url_prefix(data: &str) -> (&str, bool) {
+    let trimmed = data.trim();
+    if !trimmed
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return (trimmed, false);
+    }
+
+    match trimmed.find(',') {
+        Some(comma) => (&trimmed[comma + 1..], true),
+        None => (trimmed, false),
+    }
+}
+
+fn decode_base64_variants(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    STANDARD
+        .decode(data)
+        .or_else(|_| STANDARD_NO_PAD.decode(data))
+        .or_else(|_| URL_SAFE.decode(data))
+        .or_else(|_| URL_SAFE_NO_PAD.decode(data))
+        .or_else(|first_error| {
+            let Some(padded) = padded_base64(data) else {
+                return Err(first_error);
+            };
+            STANDARD
+                .decode(&padded)
+                .or_else(|_| URL_SAFE.decode(&padded))
+                .map_err(|_| first_error)
+        })
+}
+
+fn padded_base64(data: &str) -> Option<String> {
+    match data.len() % 4 {
+        0 => None,
+        2 => Some(format!("{}==", data)),
+        3 => Some(format!("{}=", data)),
+        _ => None,
+    }
+}
+
+fn sniff_image_format(bytes: &[u8]) -> SniffedImageFormat {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return SniffedImageFormat::Jpeg;
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return SniffedImageFormat::Png;
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return SniffedImageFormat::Gif;
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return SniffedImageFormat::Webp;
+    }
+    if bytes.starts_with(b"BM") {
+        return SniffedImageFormat::Bmp;
+    }
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        return SniffedImageFormat::Tiff;
+    }
+    if bytes.starts_with(&[0, 0, 1, 0]) {
+        return SniffedImageFormat::Ico;
+    }
+    if bytes.starts_with(b"%PDF") {
+        return SniffedImageFormat::Pdf;
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        if iso_brand_matches(bytes, &[b"avif", b"avis"]) {
+            return SniffedImageFormat::Avif;
+        }
+        if iso_brand_matches(bytes, &[b"heic", b"heix", b"hevc", b"hevx"]) {
+            return SniffedImageFormat::Heic;
+        }
+        if iso_brand_matches(bytes, &[b"mif1", b"msf1"]) {
+            return SniffedImageFormat::Heif;
+        }
+    }
+    if looks_like_svg(bytes) {
+        return SniffedImageFormat::Svg;
+    }
+    SniffedImageFormat::Unknown
+}
+
+fn iso_brand_matches(bytes: &[u8], brands: &[&[u8; 4]]) -> bool {
+    let end = bytes.len().min(64);
+    bytes[8..end]
+        .chunks(4)
+        .any(|chunk| brands.iter().any(|brand| chunk == brand.as_slice()))
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head_len = bytes.len().min(512);
+    let head = String::from_utf8_lossy(&bytes[..head_len]).to_ascii_lowercase();
+    let trimmed = head.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg"))
+}
+
+fn image_contains_transparency(img: &image::DynamicImage) -> bool {
+    if !img.has_alpha() {
+        return false;
+    }
+    img.to_rgba8().pixels().any(|pixel| pixel[3] < u8::MAX)
+}
+
+fn encode_jpeg_image(img: &image::DynamicImage) -> Result<(String, Vec<u8>), ConversionError> {
+    let rgb = img.to_rgb8();
+    let mut buf = std::io::Cursor::new(Vec::new());
+    rgb.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut buf,
+        IMAGE_JPEG_QUALITY,
+    ))
+    .map_err(|e| ConversionError::InvalidImage(format!("图片转 JPEG 失败: {}", e)))?;
+    Ok(("jpeg".to_string(), buf.into_inner()))
+}
+
+fn encode_png_image(img: &image::DynamicImage) -> Result<(String, Vec<u8>), ConversionError> {
+    let rgba = img.to_rgba8();
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| ConversionError::InvalidImage(format!("图片转 PNG 失败: {}", e)))?;
+    Ok(("png".to_string(), buf.into_inner()))
 }
 
 /// 提取工具结果内容
@@ -1279,6 +1544,76 @@ fn merge_assistant_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encode_test_image(img: image::DynamicImage, format: image::ImageFormat) -> String {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, format).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
+    }
+
+    fn decode_normalized_base64(data: &str) -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .unwrap()
+    }
+
+    #[test]
+    fn normalizes_data_url_png_to_jpeg() {
+        let img = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            2,
+            2,
+            image::Rgb([240, 10, 20]),
+        ));
+        let png = encode_test_image(img, image::ImageFormat::Png);
+        let data_url = format!("data:image/png;base64,{}", png);
+
+        let (format, data) = normalize_image_for_upstream("image/png", &data_url).unwrap();
+        let bytes = decode_normalized_base64(&data);
+
+        assert_eq!(format, "jpeg");
+        assert!(bytes.starts_with(&[0xff, 0xd8, 0xff]));
+    }
+
+    #[test]
+    fn corrects_media_type_mismatch_by_decoding_real_bytes() {
+        let img = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            2,
+            2,
+            image::Rgb([10, 200, 30]),
+        ));
+        let png = encode_test_image(img, image::ImageFormat::Png);
+
+        let (format, data) = normalize_image_for_upstream("image/jpeg", &png).unwrap();
+        let bytes = decode_normalized_base64(&data);
+
+        assert_eq!(format, "jpeg");
+        assert!(bytes.starts_with(&[0xff, 0xd8, 0xff]));
+    }
+
+    #[test]
+    fn keeps_transparent_images_as_png() {
+        let mut rgba = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+        rgba.put_pixel(0, 0, image::Rgba([10, 20, 30, 0]));
+        let png = encode_test_image(
+            image::DynamicImage::ImageRgba8(rgba),
+            image::ImageFormat::Png,
+        );
+
+        let (format, data) = normalize_image_for_upstream("image/png", &png).unwrap();
+        let bytes = decode_normalized_base64(&data);
+
+        assert_eq!(format, "png");
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn rejects_undecodable_images_before_upstream() {
+        let data = base64::engine::general_purpose::STANDARD.encode(b"not an image");
+        let err = normalize_image_for_upstream("image/heic", &data).unwrap_err();
+
+        assert!(err.to_string().contains("图片格式不支持或无法解析"));
+        assert!(err.to_string().contains("JPEG 或 PNG"));
+    }
 
     #[test]
     fn test_map_model_sonnet() {

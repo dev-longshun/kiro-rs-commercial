@@ -284,9 +284,16 @@ impl KiroCredentials {
 
     /// 获取数据面 API Region。
     ///
-    /// 优先使用显式 api_region；若凭据已解析出 profileArn，则用 ARN 内的 region；
+    /// Enterprise/IdC 凭据的数据面请求必须命中 profileArn 所属 region。
+    /// 其他凭据继续优先使用显式 api_region；若缺失则使用 profileArn 内的 region；
     /// 否则回退到原有 API region 规则。
     pub fn effective_data_region(&self, config: &Config) -> String {
+        if self.is_enterprise_identity() {
+            if let Some(region) = self.profile_region() {
+                return region;
+            }
+        }
+
         self.api_region
             .as_ref()
             .filter(|r| !r.trim().is_empty())
@@ -494,6 +501,59 @@ mod tests {
 
         assert!(!creds.is_enterprise_identity());
         assert!(!creds.needs_profile_arn_resolution());
+    }
+
+    #[test]
+    fn test_profile_region_and_data_region_from_profile_arn() {
+        let mut config = Config::default();
+        config.region = "us-east-1".to_string();
+
+        let creds = KiroCredentials {
+            profile_arn: Some(
+                "arn:aws:codewhisperer:eu-central-1:123456789012:profile/demo".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        assert_eq!(creds.profile_region().as_deref(), Some("eu-central-1"));
+        assert_eq!(creds.effective_data_region(&config), "eu-central-1");
+    }
+
+    #[test]
+    fn test_enterprise_data_region_prefers_profile_arn_over_api_region() {
+        let mut config = Config::default();
+        config.region = "us-east-1".to_string();
+
+        let creds = KiroCredentials {
+            auth_method: Some("idc".to_string()),
+            kam_provider: Some("Enterprise".to_string()),
+            api_region: Some("us-east-1".to_string()),
+            profile_arn: Some(
+                "arn:aws:codewhisperer:eu-central-1:123456789012:profile/demo".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        assert_eq!(creds.profile_region().as_deref(), Some("eu-central-1"));
+        assert_eq!(creds.effective_api_region(&config), "us-east-1");
+        assert_eq!(creds.effective_data_region(&config), "eu-central-1");
+    }
+
+    #[test]
+    fn test_non_enterprise_data_region_keeps_explicit_api_region() {
+        let mut config = Config::default();
+        config.region = "us-east-1".to_string();
+
+        let creds = KiroCredentials {
+            auth_method: Some("social".to_string()),
+            api_region: Some("us-west-2".to_string()),
+            profile_arn: Some(
+                "arn:aws:codewhisperer:eu-central-1:123456789012:profile/demo".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        assert_eq!(creds.effective_data_region(&config), "us-west-2");
     }
 
     #[test]
