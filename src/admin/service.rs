@@ -568,10 +568,11 @@ impl AdminService {
         let overage_enabled = req.overage_enabled;
         let overage_capable = req.overage_capable;
         let overage_capability_raw = req.overage_capability_raw.clone();
+        let is_api_key = req.auth_method.eq_ignore_ascii_case("api_key");
         let new_cred = KiroCredentials {
             id: None,
             access_token: req.access_token,
-            refresh_token: Some(req.refresh_token),
+            refresh_token: if is_api_key { None } else { req.refresh_token },
             profile_arn: req.profile_arn,
             expires_at: req.expires_at,
             auth_method: Some(req.auth_method),
@@ -688,6 +689,7 @@ impl AdminService {
                     idp: cred.kam_idp.clone(),
                     credentials: KamExportCredentials {
                         refresh_token: cred.refresh_token.clone(),
+                        access_token: cred.access_token.clone(),
                         client_id: cred.client_id.clone(),
                         client_secret: cred.client_secret.clone(),
                         token_endpoint: cred.token_endpoint.clone(),

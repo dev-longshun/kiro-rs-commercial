@@ -166,6 +166,8 @@ fn canonicalize_auth_method_value(value: &str) -> &str {
         || value.eq_ignore_ascii_case("externalidp")
     {
         "external_idp"
+    } else if value.eq_ignore_ascii_case("apikey") || value.eq_ignore_ascii_case("api-key") {
+        "api_key"
     } else {
         value
     }
@@ -315,6 +317,13 @@ impl KiroCredentials {
         } else {
             None
         }
+    }
+
+    /// 是否为 API Key 认证方式（静态密钥，无需 OAuth 刷新）
+    pub fn is_api_key(&self) -> bool {
+        self.auth_method
+            .as_deref()
+            .is_some_and(|m| m.eq_ignore_ascii_case("api_key"))
     }
 
     /// 是否为企业 External IdP 凭据（如 Microsoft 365 / Entra ID）。
@@ -897,6 +906,75 @@ mod tests {
         assert_eq!(parsed.priority, original.priority);
         assert_eq!(parsed.region, original.region);
         assert_eq!(parsed.machine_id, original.machine_id);
+    }
+
+    // ============ API Key 认证方式测试 ============
+
+    #[test]
+    fn test_is_api_key() {
+        let cred = KiroCredentials {
+            auth_method: Some("api_key".to_string()),
+            access_token: Some("ksk_testkey123456789012".to_string()),
+            ..Default::default()
+        };
+        assert!(cred.is_api_key());
+    }
+
+    #[test]
+    fn test_is_api_key_false_for_social() {
+        let cred = KiroCredentials {
+            auth_method: Some("social".to_string()),
+            ..Default::default()
+        };
+        assert!(!cred.is_api_key());
+    }
+
+    #[test]
+    fn test_is_api_key_false_for_none() {
+        let cred = KiroCredentials::default();
+        assert!(!cred.is_api_key());
+    }
+
+    #[test]
+    fn test_canonicalize_api_key_variants() {
+        let mut cred = KiroCredentials {
+            auth_method: Some("apikey".to_string()),
+            ..Default::default()
+        };
+        cred.canonicalize_auth_method();
+        assert_eq!(cred.auth_method.as_deref(), Some("api_key"));
+
+        cred.auth_method = Some("api-key".to_string());
+        cred.canonicalize_auth_method();
+        assert_eq!(cred.auth_method.as_deref(), Some("api_key"));
+
+        // API_KEY (大写) 走 else 分支但 is_api_key() 用 eq_ignore_ascii_case
+        cred.auth_method = Some("API_KEY".to_string());
+        assert!(cred.is_api_key());
+    }
+
+    #[test]
+    fn test_api_key_credential_not_enterprise_identity() {
+        let cred = KiroCredentials {
+            auth_method: Some("api_key".to_string()),
+            ..Default::default()
+        };
+        assert!(!cred.is_enterprise_identity());
+        assert!(!cred.needs_profile_arn_resolution());
+    }
+
+    #[test]
+    fn test_api_key_credential_serialization() {
+        let cred = KiroCredentials {
+            auth_method: Some("api_key".to_string()),
+            access_token: Some("ksk_testkey123456789012".to_string()),
+            ..Default::default()
+        };
+        let json = cred.to_pretty_json().unwrap();
+        assert!(json.contains("api_key"));
+        assert!(json.contains("ksk_testkey123456789012"));
+        // refresh_token is None, should be skipped
+        assert!(!json.contains("refreshToken"));
     }
 
     // ============ auth_region / api_region 字段测试 ============

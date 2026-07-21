@@ -101,13 +101,13 @@ pub struct SetPriorityRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddCredentialRequest {
-    /// 访问令牌（可选；external_idp KAM 导入时可直接信任未过期 accessToken）
+    /// 访问令牌（api_key 模式必填；external_idp KAM 导入时可直接信任未过期 accessToken）
     pub access_token: Option<String>,
 
-    /// 刷新令牌（必填）
-    pub refresh_token: String,
+    /// 刷新令牌（OAuth 模式必填，API Key 模式不需要）
+    pub refresh_token: Option<String>,
 
-    /// 认证方式（可选，默认 social）
+    /// 认证方式（可选，默认 social；支持 social / idc / external_idp / api_key）
     #[serde(default = "default_auth_method")]
     pub auth_method: String,
 
@@ -314,11 +314,14 @@ pub struct SsoTokenImportResponse {
 }
 
 /// 更新凭据请求（所有字段可选，只更新提供的字段）
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCredentialRequest {
     /// 刷新令牌（可选，更新后会重新验证）
     pub refresh_token: Option<String>,
+
+    /// API Key 值（可选，api_key 类型凭据更新时使用）
+    pub access_token: Option<String>,
 
     /// 认证方式（可选）
     pub auth_method: Option<String>,
@@ -746,6 +749,8 @@ pub struct KamExportAccount {
 pub struct KamExportCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

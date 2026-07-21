@@ -26,7 +26,7 @@ interface KamAccount {
   nickname?: string
   credentials: {
     accessToken?: string
-    refreshToken: string
+    refreshToken?: string
     clientId?: string
     clientSecret?: string
     tokenEndpoint?: string
@@ -189,7 +189,15 @@ function isValidKamAccount(item: unknown): item is KamAccount {
   const obj = item as Record<string, unknown>
   if (typeof obj.credentials !== 'object' || obj.credentials === null) return false
   const cred = obj.credentials as Record<string, unknown>
-  return typeof cred.refreshToken === 'string' && cred.refreshToken.trim().length > 0
+  const hasRefresh = typeof cred.refreshToken === 'string' && cred.refreshToken.trim().length > 0
+  const accessToken = typeof cred.accessToken === 'string' ? cred.accessToken.trim() : ''
+  const authMethod = typeof cred.authMethod === 'string' ? cred.authMethod.toLowerCase() : ''
+  const hasApiKey =
+    accessToken.startsWith('ksk_') ||
+    authMethod === 'api_key' ||
+    authMethod === 'apikey' ||
+    authMethod === 'api-key'
+  return hasRefresh || hasApiKey
 }
 
 // 将扁平结构（顶层 refreshToken）适配为 KAM 的 credentials 嵌套结构
@@ -198,8 +206,18 @@ function normalizeToKamAccount(item: unknown): unknown {
   const obj = item as Record<string, unknown>
   // 已有 credentials 结构，无需转换
   if (typeof obj.credentials === 'object' && obj.credentials !== null) return item
-  // 顶层有 refreshToken，自动包装
-  if (typeof obj.refreshToken === 'string' && obj.refreshToken.trim().length > 0) {
+  // 顶层有 refreshToken 或 api key accessToken，自动包装
+  const topAccess = typeof obj.accessToken === 'string' ? obj.accessToken.trim() : ''
+  const topAuth = typeof obj.authMethod === 'string' ? obj.authMethod.toLowerCase() : ''
+  const topIsApiKey =
+    topAccess.startsWith('ksk_') ||
+    topAuth === 'api_key' ||
+    topAuth === 'apikey' ||
+    topAuth === 'api-key'
+  if (
+    (typeof obj.refreshToken === 'string' && obj.refreshToken.trim().length > 0) ||
+    topIsApiKey
+  ) {
     const {
       refreshToken,
       accessToken,
@@ -274,8 +292,11 @@ function parseKamJson(raw: string): KamAccount[] {
   else if (parsed.credentials && typeof parsed.credentials === 'object') {
     rawItems = [parsed]
   }
-  // 单个扁平对象（顶层有 refreshToken）
-  else if (typeof parsed.refreshToken === 'string') {
+  // 单个扁平对象（顶层有 refreshToken / api key）
+  else if (
+    typeof parsed.refreshToken === 'string' ||
+    (typeof parsed.accessToken === 'string' && String(parsed.accessToken).startsWith('ksk_'))
+  ) {
     rawItems = [parsed]
   }
   else {
@@ -288,12 +309,12 @@ function parseKamJson(raw: string): KamAccount[] {
   const validAccounts = rawItems.filter(isValidKamAccount)
 
   if (rawItems.length > 0 && validAccounts.length === 0) {
-    throw new Error(`共 ${rawItems.length} 条记录，但均缺少有效的 credentials.refreshToken`)
+    throw new Error(`共 ${rawItems.length} 条记录，但均缺少有效的 credentials.refreshToken / API Key`)
   }
 
   if (validAccounts.length < rawItems.length) {
     const skipped = rawItems.length - validAccounts.length
-    console.warn(`KAM 导入：跳过 ${skipped} 条缺少有效 credentials.refreshToken 的记录`)
+    console.warn(`KAM 导入：跳过 ${skipped} 条缺少有效 credentials.refreshToken / API Key 的记录`)
   }
 
   return validAccounts
@@ -341,10 +362,15 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         return
       }
 
-      // 过滤无效账号
-      const validAccounts = accounts.filter(a => a.credentials?.refreshToken)
+      // 过滤无效账号（refreshToken 或 API Key）
+      const validAccounts = accounts.filter(a => {
+        const rt = a.credentials?.refreshToken?.trim()
+        const at = a.credentials?.accessToken?.trim() || ''
+        const am = a.credentials?.authMethod?.toLowerCase() || ''
+        return !!rt || at.startsWith('ksk_') || am === 'api_key' || am === 'apikey' || am === 'api-key'
+      })
       if (validAccounts.length === 0) {
-        toast.error('没有包含有效 refreshToken 的账号')
+        toast.error('没有包含有效 refreshToken / API Key 的账号')
         return
       }
 
@@ -383,8 +409,14 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         }
 
         const cred = account.credentials
-        const token = cred.refreshToken.trim()
-        const tokenHash = await sha256Hex(token)
+        const accessTokenValue = cred.accessToken?.trim() || ''
+        const refreshTokenValue = cred.refreshToken?.trim() || ''
+        const rawAuthMethod = cred.authMethod?.trim()
+        const isApiKey =
+          textIncludesAny(rawAuthMethod, ['api_key', 'apikey', 'api-key']) ||
+          (!!accessTokenValue && accessTokenValue.startsWith('ksk_') && !refreshTokenValue)
+        const token = isApiKey ? accessTokenValue : refreshTokenValue
+        const tokenHash = token ? await sha256Hex(token) : null
 
         setCurrentProcessing(`正在处理 ${account.email || account.nickname || `账号 ${i + 1}`}`)
         setResults(prev => {
@@ -392,6 +424,22 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
           next[i] = { ...next[i], status: 'checking' }
           return next
         })
+
+        if (!token) {
+          failCount++
+          setResults(prev => {
+            const next = [...prev]
+            next[i] = {
+              ...next[i],
+              status: 'failed',
+              error: isApiKey ? '缺少 API Key (accessToken)' : '缺少 refreshToken',
+              email: account.email || account.nickname,
+            }
+            return next
+          })
+          setProgress({ current: i + 1, total: validAccounts.length })
+          continue
+        }
 
         // 检查重复
         if (tokenHash && existingTokenHashes.has(tokenHash)) {
@@ -416,13 +464,47 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
         let addedCredId: number | null = null
 
         try {
+          if (isApiKey) {
+            if (!token.startsWith('ksk_') || token.length < 20) {
+              throw new Error('API Key 格式无效，应以 ksk_ 开头且至少 20 字符')
+            }
+            const addedCred = await addCredential({
+              accessToken: token,
+              authMethod: 'api_key',
+              accountSource: firstNonEmptyString(account.accountSource, account.account_source) || 'api_key',
+              accountSourceLabel: firstNonEmptyString(account.accountSourceLabel, account.account_source_label) || 'API Key',
+              machineId: account.machineId?.trim() || undefined,
+              email: firstNonEmptyString(account.email, account.nickname),
+              kamIdp: account.idp?.trim() || undefined,
+              kamProvider: (cred.provider || account.idp)?.trim() || undefined,
+              kamGroupId: firstNonEmptyString(account.groupId, account.group_id),
+              kamGroupName: firstNonEmptyString(account.groupName, account.group_name),
+              labels: normalizeKamLabels(account),
+            })
+            addedCredId = addedCred.credentialId
+            successCount++
+            if (tokenHash) existingTokenHashes.add(tokenHash)
+            setResults(prev => {
+              const next = [...prev]
+              next[i] = {
+                ...next[i],
+                status: 'verified',
+                usage: 'API Key（无需余额验活）',
+                email: addedCred.email || account.email || account.nickname,
+                credentialId: addedCred.credentialId,
+              }
+              return next
+            })
+            setProgress({ current: i + 1, total: validAccounts.length })
+            continue
+          }
+
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
           const explicitTokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
           const explicitIssuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
           const inferredIssuerUrl = extractMicrosoftIssuerUrl(explicitIssuerUrl, account.userId)
           const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
-          const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || account.idp
           const exportedRegion = cred.region?.trim() || undefined
           const exportedAuthRegion = firstNonEmptyString(cred.authRegion, cred.auth_region, exportedRegion)

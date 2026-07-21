@@ -1607,6 +1607,22 @@ impl MultiTokenManager {
         id: u64,
         credentials: &KiroCredentials,
     ) -> anyhow::Result<CallContext> {
+        // API Key 凭据：无过期、无刷新，直接返回
+        if credentials.is_api_key() {
+            let token = credentials
+                .access_token
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("API Key 凭据 #{} 缺少 access_token", id))?;
+            if token.trim().is_empty() {
+                anyhow::bail!("API Key 凭据 #{} 的 access_token 为空", id);
+            }
+            return Ok(CallContext {
+                id,
+                credentials: credentials.clone(),
+                token,
+            });
+        }
+
         // 第一次检查（无锁）：快速判断是否需要刷新
         let needs_refresh = is_token_expired(credentials) || is_token_expiring_soon(credentials);
 
@@ -2067,7 +2083,11 @@ impl MultiTokenManager {
                     }),
                     has_profile_arn: e.credentials.profile_arn.is_some(),
                     expires_at: e.credentials.expires_at.clone(),
-                    refresh_token_hash: e.credentials.refresh_token.as_deref().map(sha256_hex),
+                    refresh_token_hash: if e.credentials.is_api_key() {
+                        e.credentials.access_token.as_deref().map(sha256_hex)
+                    } else {
+                        e.credentials.refresh_token.as_deref().map(sha256_hex)
+                    },
                     email: e.credentials.email.clone(),
                     success_count: e.success_count,
                     last_used_at: e.last_used_at.clone(),
@@ -2173,6 +2193,12 @@ impl MultiTokenManager {
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
 
+        // API Key 凭据无需刷新
+        if credentials.is_api_key() {
+            tracing::debug!("凭据 #{} 是 API Key 类型，跳过强制刷新", id);
+            return Ok(());
+        }
+
         let effective_proxy = credentials.effective_proxy(self.proxy.as_ref());
         let mut new_creds =
             match refresh_token(&credentials, &self.config, effective_proxy.as_ref()).await {
@@ -2237,63 +2263,78 @@ impl MultiTokenManager {
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
 
-        // 检查是否需要刷新 token
-        let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
+        // API Key 凭据：直接使用 access_token，无需刷新
+        let token = if credentials.is_api_key() {
+            credentials
+                .access_token
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("API Key 凭据缺少 access_token"))?
+        } else {
+            // 检查是否需要刷新 token
+            let needs_refresh =
+                is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
 
-        let token = if needs_refresh {
-            let _guard = self.refresh_lock.lock().await;
-            let current_creds = {
-                let entries = self.entries.lock();
-                entries
-                    .iter()
-                    .find(|e| e.id == id)
-                    .map(|e| e.credentials.clone())
-                    .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
-            };
+            if needs_refresh {
+                let _guard = self.refresh_lock.lock().await;
+                let current_creds = {
+                    let entries = self.entries.lock();
+                    entries
+                        .iter()
+                        .find(|e| e.id == id)
+                        .map(|e| e.credentials.clone())
+                        .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+                };
 
-            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
-                let effective_proxy = current_creds.effective_proxy(self.proxy.as_ref());
-                let new_creds =
-                    match refresh_token(&current_creds, &self.config, effective_proxy.as_ref())
-                        .await
-                    {
-                        Ok(new_creds) => {
-                            self.emit_event(
-                                CredentialEvent::new(CredentialEventType::TokenRefreshSuccess, id)
+                if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
+                    let effective_proxy = current_creds.effective_proxy(self.proxy.as_ref());
+                    let new_creds =
+                        match refresh_token(&current_creds, &self.config, effective_proxy.as_ref())
+                            .await
+                        {
+                            Ok(new_creds) => {
+                                self.emit_event(
+                                    CredentialEvent::new(
+                                        CredentialEventType::TokenRefreshSuccess,
+                                        id,
+                                    )
                                     .with_reason("余额查询前 Token 刷新成功"),
-                            );
-                            new_creds
-                        }
-                        Err(e) => {
-                            self.emit_event(
-                                CredentialEvent::new(CredentialEventType::TokenRefreshFailure, id)
+                                );
+                                new_creds
+                            }
+                            Err(e) => {
+                                self.emit_event(
+                                    CredentialEvent::new(
+                                        CredentialEventType::TokenRefreshFailure,
+                                        id,
+                                    )
                                     .with_reason(format!("余额查询前 Token 刷新失败: {}", e)),
-                            );
-                            return Err(e);
+                                );
+                                return Err(e);
+                            }
+                        };
+                    {
+                        let mut entries = self.entries.lock();
+                        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                            entry.credentials = new_creds.clone();
                         }
-                    };
-                {
-                    let mut entries = self.entries.lock();
-                    if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-                        entry.credentials = new_creds.clone();
                     }
+                    // 持久化失败只记录警告，不影响本次请求
+                    if let Err(e) = self.persist_credentials() {
+                        tracing::warn!("Token 刷新后持久化失败（不影响本次请求）: {}", e);
+                    }
+                    new_creds
+                        .access_token
+                        .ok_or_else(|| anyhow::anyhow!("刷新后无 access_token"))?
+                } else {
+                    current_creds
+                        .access_token
+                        .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
                 }
-                // 持久化失败只记录警告，不影响本次请求
-                if let Err(e) = self.persist_credentials() {
-                    tracing::warn!("Token 刷新后持久化失败（不影响本次请求）: {}", e);
-                }
-                new_creds
-                    .access_token
-                    .ok_or_else(|| anyhow::anyhow!("刷新后无 access_token"))?
             } else {
-                current_creds
+                credentials
                     .access_token
                     .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
             }
-        } else {
-            credentials
-                .access_token
-                .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
         };
 
         let credentials = {
@@ -2447,6 +2488,11 @@ impl MultiTokenManager {
     /// - `Ok(u64)` - 新凭据 ID
     /// - `Err(_)` - 验证失败或添加失败
     pub async fn add_credential(&self, new_cred: KiroCredentials) -> anyhow::Result<u64> {
+        // API Key 凭据：专用验证路径，跳过 OAuth refresh 流程
+        if new_cred.is_api_key() {
+            return self.add_api_key_credential(new_cred).await;
+        }
+
         // 1. 基本验证
         validate_refresh_token(&new_cred)?;
 
@@ -2565,6 +2611,98 @@ impl MultiTokenManager {
         Ok(new_id)
     }
 
+    /// 添加 API Key 凭据（内部方法）
+    ///
+    /// API Key 凭据不需要 refresh_token，直接使用 access_token 作为 Bearer token。
+    /// 跳过 OAuth 刷新验证，仅做格式校验和去重。
+    async fn add_api_key_credential(&self, new_cred: KiroCredentials) -> anyhow::Result<u64> {
+        // 1. 验证 access_token（即 API Key）
+        let api_key = new_cred
+            .access_token
+            .as_deref()
+            .filter(|k| !k.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("API Key 凭据缺少 accessToken"))?;
+
+        if !api_key.starts_with("ksk_") || api_key.len() < 20 {
+            anyhow::bail!("API Key 格式无效（应以 ksk_ 开头，至少 20 字符）");
+        }
+
+        // 2. 基于 access_token 哈希去重
+        let key_hash = sha256_hex(api_key);
+        let duplicate_exists = {
+            let entries = self.entries.lock();
+            entries.iter().any(|entry| {
+                entry.credentials.is_api_key()
+                    && entry
+                        .credentials
+                        .access_token
+                        .as_deref()
+                        .map(sha256_hex)
+                        .as_deref()
+                        == Some(key_hash.as_str())
+            })
+        };
+        if duplicate_exists {
+            anyhow::bail!("API Key 已存在（重复）");
+        }
+
+        // 3. 分配新 ID
+        let new_id = {
+            let entries = self.entries.lock();
+            entries.iter().map(|e| e.id).max().unwrap_or(0) + 1
+        };
+
+        // 4. 构建凭据
+        let mut validated_cred = new_cred.clone();
+        validated_cred.id = Some(new_id);
+        validated_cred.auth_method = Some("api_key".to_string());
+        validated_cred.expires_at = None; // API Key 永不过期
+        validated_cred.refresh_token = None; // 不需要 refresh_token
+        if validated_cred.machine_id.is_none() {
+            if let Some(machine_id) =
+                machine_id::generate_from_credentials(&validated_cred, &self.config)
+            {
+                validated_cred.machine_id = Some(machine_id);
+            }
+        }
+
+        // 5. 添加到 entries
+        {
+            let mut entries = self.entries.lock();
+            entries.push(CredentialEntry {
+                id: new_id,
+                credentials: validated_cred,
+                failure_count: 0,
+                disabled: false,
+                disabled_reason: None,
+                success_count: 0,
+                last_used_at: None,
+            });
+        }
+
+        // 6. 自动升级为多凭据格式
+        if !self.is_multiple_format.load(Ordering::Relaxed) {
+            self.is_multiple_format.store(true, Ordering::Relaxed);
+            tracing::info!("已自动升级为多凭据格式以支持持久化");
+        }
+
+        // 7. 持久化
+        match self.persist_credentials() {
+            Ok(true) => tracing::info!(
+                "API Key 凭据 #{} 已持久化到文件（共 {} 个凭据）",
+                new_id,
+                { self.entries.lock().len() }
+            ),
+            Ok(false) => {
+                tracing::warn!("API Key 凭据 #{} 未持久化（非多凭据格式或路径未设置）", new_id)
+            }
+            Err(e) => tracing::error!("API Key 凭据 #{} 持久化失败: {}", new_id, e),
+        }
+
+        tracing::info!("成功添加 API Key 凭据 #{}", new_id);
+        Ok(new_id)
+    }
+
     /// 更新凭据配置（Admin API）
     ///
     /// 只更新提供的字段，不会触发 token 刷新验证（除非 refreshToken 变更）
@@ -2574,12 +2712,32 @@ impl MultiTokenManager {
         update: crate::admin::types::UpdateCredentialRequest,
     ) -> anyhow::Result<()> {
         // 检查凭据是否存在
-        let exists = {
+        let (exists, is_api_key) = {
             let entries = self.entries.lock();
-            entries.iter().any(|e| e.id == id)
+            match entries.iter().find(|e| e.id == id) {
+                Some(e) => (true, e.credentials.is_api_key()),
+                None => (false, false),
+            }
         };
         if !exists {
             anyhow::bail!("凭据不存在: {}", id);
+        }
+
+        // API Key 凭据：直接更新字段，不调用 refresh 验证
+        if is_api_key {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                // 更新 access_token（API Key 值）
+                if let Some(ref at) = update.access_token {
+                    if !at.trim().is_empty() {
+                        entry.credentials.access_token = Some(at.clone());
+                    }
+                }
+                Self::apply_update_fields(&mut entry.credentials, &update);
+            }
+            self.persist_credentials()?;
+            tracing::info!("成功更新 API Key 凭据 #{}", id);
+            return Ok(());
         }
 
         // 如果 refreshToken 变更，需要重新验证
@@ -3638,5 +3796,261 @@ mod tests {
 
         assert_eq!(credentials.effective_auth_region(&config), "auth-only");
         assert_eq!(credentials.effective_api_region(&config), "api-only");
+    }
+
+    // ============ API Key 认证方式测试 ============
+
+    #[tokio::test]
+    async fn test_api_key_credential_acquire_context_no_refresh() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_testkey12345678901234567890".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_testkey12345678901234567890");
+        assert_eq!(ctx.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_api_key_credential_missing_access_token_fails() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = None;
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+        let result = manager.acquire_context(None).await;
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        // try_ensure_token 会报 access_token 缺失；acquire_context 也可能汇总为“所有凭据均无法获取”
+        assert!(
+            err.contains("access_token") || err.contains("所有凭据"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_api_key_credential_empty_access_token_fails() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+        let result = manager.acquire_context(None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_api_key_mixed_with_oauth_credentials() {
+        let config = Config::default();
+        let mut api_key_cred = KiroCredentials::default();
+        api_key_cred.auth_method = Some("api_key".to_string());
+        api_key_cred.access_token = Some("ksk_apikey12345678901234567890".to_string());
+
+        let mut oauth_cred = KiroCredentials::default();
+        oauth_cred.auth_method = Some("social".to_string());
+        oauth_cred.access_token = Some("oauth_token_abc".to_string());
+        oauth_cred.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+
+        let manager =
+            MultiTokenManager::new(config, vec![api_key_cred, oauth_cred], None, None, false)
+                .unwrap();
+
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert!(
+            ctx.token == "ksk_apikey12345678901234567890" || ctx.token == "oauth_token_abc"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_api_key_credential_success() {
+        let config = Config::default();
+        let manager = MultiTokenManager::new(config, vec![], None, None, true).unwrap();
+
+        let mut new_cred = KiroCredentials::default();
+        new_cred.auth_method = Some("api_key".to_string());
+        new_cred.access_token = Some("ksk_newkey12345678901234567890".to_string());
+
+        let result = manager.add_credential(new_cred).await;
+        assert!(result.is_ok());
+        let id = result.unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(manager.total_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_add_api_key_credential_invalid_format() {
+        let config = Config::default();
+        let manager = MultiTokenManager::new(config, vec![], None, None, true).unwrap();
+
+        let mut new_cred = KiroCredentials::default();
+        new_cred.auth_method = Some("api_key".to_string());
+        new_cred.access_token = Some("invalid_key_123".to_string());
+
+        let result = manager.add_credential(new_cred).await;
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("ksk_"));
+    }
+
+    #[tokio::test]
+    async fn test_add_api_key_credential_empty_access_token() {
+        let config = Config::default();
+        let manager = MultiTokenManager::new(config, vec![], None, None, true).unwrap();
+
+        let mut new_cred = KiroCredentials::default();
+        new_cred.auth_method = Some("api_key".to_string());
+        new_cred.access_token = None;
+
+        let result = manager.add_credential(new_cred).await;
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("accessToken"));
+    }
+
+    #[tokio::test]
+    async fn test_add_api_key_credential_reject_duplicate() {
+        let config = Config::default();
+        let mut existing = KiroCredentials::default();
+        existing.auth_method = Some("api_key".to_string());
+        existing.access_token = Some("ksk_existingkey1234567890abcdef".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![existing], None, None, true).unwrap();
+
+        let mut duplicate = KiroCredentials::default();
+        duplicate.auth_method = Some("api_key".to_string());
+        duplicate.access_token = Some("ksk_existingkey1234567890abcdef".to_string());
+
+        let result = manager.add_credential(duplicate).await;
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("已存在"));
+    }
+
+    #[tokio::test]
+    async fn test_add_api_key_no_refresh_token_required() {
+        let config = Config::default();
+        let manager = MultiTokenManager::new(config, vec![], None, None, true).unwrap();
+
+        let mut new_cred = KiroCredentials::default();
+        new_cred.auth_method = Some("api_key".to_string());
+        new_cred.access_token = Some("ksk_validkey123456789012345678".to_string());
+        new_cred.refresh_token = None;
+
+        let result = manager.add_credential(new_cred).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_force_refresh_api_key_is_noop() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_testkey12345678901234567890".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+
+        let result = manager.force_refresh_token(1).await;
+        assert!(result.is_ok());
+
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_testkey12345678901234567890");
+    }
+
+    #[tokio::test]
+    async fn test_api_key_self_healing_skips_refresh() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_testkey12345678901234567890".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+
+        for _ in 0..MAX_FAILURES_PER_CREDENTIAL {
+            manager.report_failure(1);
+        }
+        assert_eq!(manager.available_count(), 0);
+
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_testkey12345678901234567890");
+    }
+
+    #[test]
+    fn test_snapshot_api_key_uses_access_token_hash() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_testkey12345678901234567890".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, false).unwrap();
+        let snapshot = manager.snapshot();
+
+        assert!(snapshot.entries[0].refresh_token_hash.is_some());
+        let expected_hash = sha256_hex("ksk_testkey12345678901234567890");
+        assert_eq!(
+            snapshot.entries[0].refresh_token_hash.as_deref(),
+            Some(expected_hash.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_api_key_credential_access_token() {
+        let config = Config::default();
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_oldkey1234567890123456789012".to_string());
+
+        let manager = MultiTokenManager::new(config, vec![cred], None, None, true).unwrap();
+
+        let update = crate::admin::types::UpdateCredentialRequest {
+            access_token: Some("ksk_newkey1234567890123456789012".to_string()),
+            ..Default::default()
+        };
+
+        let result = manager.update_credential(1, update).await;
+        assert!(result.is_ok());
+
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_newkey1234567890123456789012");
+    }
+
+    #[tokio::test]
+    async fn test_api_key_full_lifecycle() {
+        let config = Config::default();
+        let manager = MultiTokenManager::new(config, vec![], None, None, true).unwrap();
+
+        let mut cred = KiroCredentials::default();
+        cred.auth_method = Some("api_key".to_string());
+        cred.access_token = Some("ksk_lifecycle_test_key_1234567".to_string());
+        let id = manager.add_credential(cred).await.unwrap();
+        assert_eq!(id, 1);
+
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_lifecycle_test_key_1234567");
+        assert_eq!(ctx.id, 1);
+
+        for _ in 0..MAX_FAILURES_PER_CREDENTIAL {
+            manager.report_failure(1);
+        }
+        assert_eq!(manager.available_count(), 0);
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_lifecycle_test_key_1234567");
+
+        let snapshot = manager.snapshot();
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].auth_method.as_deref(), Some("api_key"));
+        assert!(snapshot.entries[0].refresh_token_hash.is_some());
+
+        assert!(manager.force_refresh_token(1).await.is_ok());
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_lifecycle_test_key_1234567");
+
+        let update = crate::admin::types::UpdateCredentialRequest {
+            access_token: Some("ksk_updated_key_12345678901234".to_string()),
+            ..Default::default()
+        };
+        manager.update_credential(1, update).await.unwrap();
+        let ctx = manager.acquire_context(None).await.unwrap();
+        assert_eq!(ctx.token, "ksk_updated_key_12345678901234");
     }
 }

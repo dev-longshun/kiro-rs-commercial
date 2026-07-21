@@ -21,6 +21,7 @@ interface EditCredentialDialogProps {
 
 export function EditCredentialDialog({ open, onOpenChange, credential }: EditCredentialDialogProps) {
   const [email, setEmail] = useState('')
+  const [accessToken, setAccessToken] = useState('')
   const [authRegion, setAuthRegion] = useState('')
   const [apiRegion, setApiRegion] = useState('')
   const [clientId, setClientId] = useState('')
@@ -38,11 +39,13 @@ export function EditCredentialDialog({ open, onOpenChange, credential }: EditCre
   const [labels, setLabels] = useState('')
 
   const { mutate, isPending } = useUpdateCredential()
+  const isApiKey = credential.authMethod === 'api_key'
 
   // 当对话框打开或凭据变化时，重置表单
   useEffect(() => {
     if (open) {
       setEmail(credential.email || '')
+      setAccessToken('')
       setAuthRegion('')
       setApiRegion('')
       setClientId('')
@@ -67,6 +70,14 @@ export function EditCredentialDialog({ open, onOpenChange, credential }: EditCre
     // 构建只包含有变更的字段
     const data: Record<string, string | string[]> = {}
     if (email !== (credential.email || '')) data.email = email
+    if (isApiKey && accessToken.trim()) {
+      const key = accessToken.trim()
+      if (!key.startsWith('ksk_') || key.length < 20) {
+        toast.error('API Key 格式无效，应以 ksk_ 开头且至少 20 字符')
+        return
+      }
+      data.accessToken = key
+    }
     if (authRegion !== '') data.authRegion = authRegion
     if (apiRegion !== '') data.apiRegion = apiRegion
     if (clientId !== '') data.clientId = clientId
@@ -118,6 +129,18 @@ export function EditCredentialDialog({ open, onOpenChange, credential }: EditCre
               只填写需要修改的字段，留空的字段不会被更改。
             </p>
 
+            {isApiKey && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">API Key</label>
+                <Input
+                  type="password"
+                  placeholder="留空则不修改；填写新 ksk_... 可替换"
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
+                  disabled={isPending}
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">邮箱</label>
               <Input

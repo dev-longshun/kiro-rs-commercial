@@ -57,6 +57,13 @@ pub fn generate_from_credentials(credentials: &KiroCredentials, config: &Config)
         }
     }
 
+    // 使用 accessToken 生成（API Key 场景：无 refreshToken 时的 fallback）
+    if let Some(ref access_token) = credentials.access_token {
+        if !access_token.is_empty() {
+            return Some(sha256_hex(&format!("KotlinNativeAPI/{}", access_token)));
+        }
+    }
+
     // 没有有效的凭证
     None
 }
@@ -166,5 +173,44 @@ mod tests {
         let result = generate_from_credentials(&credentials, &config);
         assert!(result.is_some());
         assert_eq!(result.as_ref().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn test_generate_with_access_token_fallback() {
+        // API Key 场景：无 refresh_token，有 access_token
+        let mut credentials = KiroCredentials::default();
+        credentials.access_token = Some("ksk_testkey123456789012".to_string());
+        let config = Config::default();
+
+        let result = generate_from_credentials(&credentials, &config);
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn test_generate_refresh_token_takes_priority_over_access_token() {
+        // 同时有 refresh_token 和 access_token 时，refresh_token 优先
+        let mut credentials = KiroCredentials::default();
+        credentials.refresh_token = Some("refresh_123".to_string());
+        credentials.access_token = Some("ksk_testkey123456789012".to_string());
+        let config = Config::default();
+
+        let result_with_both = generate_from_credentials(&credentials, &config);
+
+        credentials.access_token = None;
+        let result_refresh_only = generate_from_credentials(&credentials, &config);
+
+        // 两者应相同（refresh_token 优先）
+        assert_eq!(result_with_both, result_refresh_only);
+    }
+
+    #[test]
+    fn test_generate_access_token_empty_returns_none() {
+        let mut credentials = KiroCredentials::default();
+        credentials.access_token = Some("".to_string());
+        let config = Config::default();
+
+        let result = generate_from_credentials(&credentials, &config);
+        assert!(result.is_none());
     }
 }

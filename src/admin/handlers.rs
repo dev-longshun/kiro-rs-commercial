@@ -62,7 +62,7 @@ fn flow_credential_to_add_request(credential: FlowCredential) -> AddCredentialRe
     let (account_source, account_source_label) = flow_source(&credential);
     AddCredentialRequest {
         access_token: None,
-        refresh_token: credential.refresh_token,
+        refresh_token: Some(credential.refresh_token),
         auth_method: credential.auth_method,
         client_id: credential.client_id,
         client_secret: credential.client_secret,

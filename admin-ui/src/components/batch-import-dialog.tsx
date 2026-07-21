@@ -21,7 +21,7 @@ interface BatchImportDialogProps {
 
 interface CredentialInput {
   accessToken?: string
-  refreshToken: string
+  refreshToken?: string
   clientId?: string
   clientSecret?: string
   tokenEndpoint?: string
@@ -200,8 +200,14 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
       // 4. 导入并验活
       for (let i = 0; i < credentials.length; i++) {
         const cred = credentials[i]
-        const token = cred.refreshToken.trim()
-        const tokenHash = await sha256Hex(token)
+        const accessTokenValue = cred.accessToken?.trim() || ''
+        const refreshTokenValue = cred.refreshToken?.trim() || ''
+        const rawAuthMethod = cred.authMethod?.trim()
+        const isApiKey =
+          textIncludesAny(rawAuthMethod, ['api_key', 'apikey', 'api-key']) ||
+          (!!accessTokenValue && accessTokenValue.startsWith('ksk_') && !refreshTokenValue)
+        const token = isApiKey ? accessTokenValue : refreshTokenValue
+        const tokenHash = token ? await sha256Hex(token) : null
 
         // 更新状态为检查中
         setCurrentProcessing(`正在处理凭据 ${i + 1}/${credentials.length}`)
@@ -210,6 +216,21 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           newResults[i] = { ...newResults[i], status: 'checking' }
           return newResults
         })
+
+        if (!token) {
+          failCount++
+          setResults(prev => {
+            const newResults = [...prev]
+            newResults[i] = {
+              ...newResults[i],
+              status: 'failed',
+              error: isApiKey ? '缺少 API Key (accessToken)' : '缺少 refreshToken',
+            }
+            return newResults
+          })
+          setProgress({ current: i + 1, total: credentials.length })
+          continue
+        }
 
         // 检查重复
         if (tokenHash && existingTokenHashes.has(tokenHash)) {
@@ -240,13 +261,44 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
 
         try {
           // 添加凭据
+          if (isApiKey) {
+            if (!token.startsWith('ksk_') || token.length < 20) {
+              throw new Error('API Key 格式无效，应以 ksk_ 开头且至少 20 字符')
+            }
+            const addedCred = await addCredential({
+              accessToken: token,
+              authMethod: 'api_key',
+              accountSource: 'api_key',
+              accountSourceLabel: 'API Key',
+              priority: cred.priority || 0,
+              machineId: cred.machineId?.trim() || undefined,
+              email: cred.email?.trim() || undefined,
+            })
+            addedCredId = addedCred.credentialId
+            successCount++
+            if (tokenHash) existingTokenHashes.add(tokenHash)
+            setCurrentProcessing(addedCred.email ? `导入成功: ${addedCred.email}` : `导入成功: 凭据 ${i + 1}`)
+            setResults(prev => {
+              const newResults = [...prev]
+              newResults[i] = {
+                ...newResults[i],
+                status: 'verified',
+                usage: 'API Key（无需余额验活）',
+                email: addedCred.email || undefined,
+                credentialId: addedCred.credentialId
+              }
+              return newResults
+            })
+            setProgress({ current: i + 1, total: credentials.length })
+            continue
+          }
+
           const clientId = cred.clientId?.trim() || undefined
           const clientSecret = cred.clientSecret?.trim() || undefined
           const explicitTokenEndpoint = firstNonEmptyString(cred.tokenEndpoint, cred.token_endpoint)
           const explicitIssuerUrl = firstNonEmptyString(cred.issuerUrl, cred.issuer_url)
           const inferredIssuerUrl = extractMicrosoftIssuerUrl(explicitIssuerUrl, cred.userId)
           const explicitScopes = firstNonEmptyString(cred.scopes, cred.scope)
-          const rawAuthMethod = cred.authMethod?.trim()
           const provider = cred.provider || cred.idp
           const exportedRegion = cred.region?.trim() || undefined
           const isExternalIdp =

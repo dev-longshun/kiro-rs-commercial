@@ -29,12 +29,13 @@ interface AddCredentialDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type AuthMethod = 'social' | 'idc' | 'external_idp'
+type AuthMethod = 'social' | 'idc' | 'external_idp' | 'api_key'
 type EntryMode = 'manual' | 'builder_id' | 'iam_sso' | 'kiro_sso' | 'sso_token'
 
 export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogProps) {
   const [entryMode, setEntryMode] = useState<EntryMode>('manual')
   const [refreshToken, setRefreshToken] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [authMethod, setAuthMethod] = useState<AuthMethod>('social')
   const [authRegion, setAuthRegion] = useState('')
   const [apiRegion, setApiRegion] = useState('')
@@ -63,6 +64,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
   const resetForm = () => {
     setEntryMode('manual')
     setRefreshToken('')
+    setApiKey('')
     setAuthMethod('social')
     setAuthRegion('')
     setApiRegion('')
@@ -90,6 +92,43 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
     e.preventDefault()
 
     if (entryMode !== 'manual') {
+      return
+    }
+
+    if (authMethod === 'api_key') {
+      const key = apiKey.trim()
+      if (!key) {
+        toast.error('请输入 API Key')
+        return
+      }
+      if (!key.startsWith('ksk_') || key.length < 20) {
+        toast.error('API Key 格式无效，应以 ksk_ 开头且至少 20 字符')
+        return
+      }
+
+      mutate(
+        {
+          accessToken: key,
+          authMethod: 'api_key',
+          accountSource: 'api_key',
+          accountSourceLabel: 'API Key',
+          priority: parseInt(priority) || 0,
+          machineId: machineId.trim() || undefined,
+          proxyUrl: proxyUrl.trim() || undefined,
+          proxyUsername: proxyUsername.trim() || undefined,
+          proxyPassword: proxyPassword.trim() || undefined,
+        },
+        {
+          onSuccess: (data) => {
+            toast.success(data.message)
+            onOpenChange(false)
+            resetForm()
+          },
+          onError: (error: unknown) => {
+            toast.error(`添加失败: ${extractErrorMessage(error)}`)
+          },
+        }
+      )
       return
     }
 
@@ -319,21 +358,6 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
 
             {entryMode === 'manual' && (
               <>
-            {/* Refresh Token */}
-            <div className="space-y-2">
-              <label htmlFor="refreshToken" className="text-sm font-medium">
-                Refresh Token <span className="text-nb-red">*</span>
-              </label>
-              <Input
-                id="refreshToken"
-                type="password"
-                placeholder="请输入 Refresh Token"
-                value={refreshToken}
-                onChange={(e) => setRefreshToken(e.target.value)}
-                disabled={isPending}
-              />
-            </div>
-
             {/* 认证方式 */}
             <div className="space-y-2">
               <label htmlFor="authMethod" className="text-sm font-medium">
@@ -349,10 +373,45 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
                 <option value="social">Social</option>
                 <option value="idc">IdC/Builder-ID/IAM</option>
                 <option value="external_idp">External IdP / Microsoft 365</option>
+                <option value="api_key">API Key</option>
               </select>
             </div>
 
-            {/* Region 配置 */}
+            {authMethod === 'api_key' ? (
+              <div className="space-y-2">
+                <label htmlFor="apiKey" className="text-sm font-medium">
+                  API Key <span className="text-nb-red">*</span>
+                </label>
+                <Input
+                  id="apiKey"
+                  type="password"
+                  placeholder="ksk_..."
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  disabled={isPending}
+                />
+                <p className="text-xs text-muted-foreground">
+                  静态密钥，以 ksk_ 开头，无需 OAuth 刷新
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label htmlFor="refreshToken" className="text-sm font-medium">
+                  Refresh Token <span className="text-nb-red">*</span>
+                </label>
+                <Input
+                  id="refreshToken"
+                  type="password"
+                  placeholder="请输入 Refresh Token"
+                  value={refreshToken}
+                  onChange={(e) => setRefreshToken(e.target.value)}
+                  disabled={isPending}
+                />
+              </div>
+            )}
+
+            {/* Region 配置（API Key 无需刷新，可跳过） */}
+            {authMethod !== 'api_key' && (
             <div className="space-y-2">
               <label className="text-sm font-medium">Region 配置</label>
               <div className="grid grid-cols-2 gap-2">
@@ -379,6 +438,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
                 均可留空使用全局配置。Auth Region 用于 Token 刷新，API Region 用于 API 请求
               </p>
             </div>
+            )}
 
             {/* IdC/Builder-ID/IAM 额外字段 */}
             {authMethod === 'idc' && (
@@ -636,7 +696,7 @@ export function AddCredentialDialog({ open, onOpenChange }: AddCredentialDialogP
               取消
             </Button>
             {entryMode === 'manual' && (
-              <Button type="submit" disabled={isPending}>
+              <Button type="submit" disabled={isPending || (authMethod === 'api_key' ? !apiKey.trim() : !refreshToken.trim())}>
                 {isPending ? '添加中...' : '添加'}
               </Button>
             )}
