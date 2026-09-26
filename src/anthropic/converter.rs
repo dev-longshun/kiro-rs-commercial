@@ -208,6 +208,7 @@ Complete all chunked operations without commentary.";
 /// - sonnet 5 → claude-sonnet-5
 /// - sonnet 4.6/4-6 → claude-sonnet-4.6
 /// - 其他 sonnet → claude-sonnet-4.5
+/// - opus 5.5/5-5 → claude-opus-5.5
 /// - opus 5 → claude-opus-5
 /// - opus 4.8/4-8 → claude-opus-4.8
 /// - opus 4.5/4-5 → claude-opus-4.5
@@ -227,7 +228,14 @@ pub fn map_model(model: &str) -> Option<String> {
             Some("claude-sonnet-4.5".to_string())
         }
     } else if model_lower.contains("opus") {
-        if model_lower.contains("opus-5") || model_lower.contains("opus5") {
+        if model_lower.contains("opus-5-5")
+            || model_lower.contains("opus-5.5")
+            || model_lower.contains("opus5.5")
+            || model_lower.contains("opus5-5")
+        {
+            // 必须先于 opus-5 判断，否则 5.5 会被降级成 opus-5
+            Some("claude-opus-5.5".to_string())
+        } else if model_lower.contains("opus-5") || model_lower.contains("opus5") {
             // 精确匹配 major 版本 5，避免把 opus-4.5 误判为 5
             Some("claude-opus-5".to_string())
         } else if model_lower.contains("4-8") || model_lower.contains("4.8") {
@@ -1665,6 +1673,31 @@ mod tests {
             map_model("claude-opus-4-20250514")
                 .unwrap()
                 .contains("opus")
+        );
+    }
+
+    #[test]
+    fn test_map_model_opus_5_5() {
+        for name in [
+            "claude-opus-5-5",
+            "claude-opus-5-5-thinking",
+            "claude-opus-5.5",
+            "claude-opus-5.5-thinking",
+            "opus-5.5",
+            "opus5.5",
+        ] {
+            assert_eq!(map_model(name), Some("claude-opus-5.5".to_string()), "{name}");
+        }
+        // opus 5 不能被误判为 5.5
+        assert_eq!(map_model("claude-opus-5"), Some("claude-opus-5".to_string()));
+        assert_eq!(
+            map_model("claude-opus-5-thinking"),
+            Some("claude-opus-5".to_string())
+        );
+        // opus 4.5 不能被误判为 5.5
+        assert_eq!(
+            map_model("claude-opus-4-5-20251101"),
+            Some("claude-opus-4.5".to_string())
         );
     }
 
