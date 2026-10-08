@@ -205,6 +205,7 @@ Complete all chunked operations without commentary.";
 /// 模型映射：将 Anthropic 模型名映射到 Kiro 模型 ID
 ///
 /// 按照用户要求：
+/// - sonnet 5.5/5-5 → claude-sonnet-5.5
 /// - sonnet 5 → claude-sonnet-5
 /// - sonnet 4.6/4-6 → claude-sonnet-4.6
 /// - 其他 sonnet → claude-sonnet-4.5
@@ -219,7 +220,14 @@ pub fn map_model(model: &str) -> Option<String> {
     let model_lower = model.to_lowercase();
 
     if model_lower.contains("sonnet") {
-        if model_lower.contains("sonnet-5") || model_lower.contains("sonnet5") {
+        if model_lower.contains("sonnet-5-5")
+            || model_lower.contains("sonnet-5.5")
+            || model_lower.contains("sonnet5.5")
+            || model_lower.contains("sonnet5-5")
+        {
+            // 必须先于 sonnet-5 判断，否则 5.5 会被降级成 sonnet-5
+            Some("claude-sonnet-5.5".to_string())
+        } else if model_lower.contains("sonnet-5") || model_lower.contains("sonnet5") {
             // 精确匹配 major 版本 5，避免把 sonnet-4.5 误判为 5
             Some("claude-sonnet-5".to_string())
         } else if model_lower.contains("4-6") || model_lower.contains("4.6") {
@@ -1663,6 +1671,31 @@ mod tests {
         );
         assert_eq!(
             map_model("claude-sonnet-4.5"),
+            Some("claude-sonnet-4.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_model_sonnet_5_5() {
+        for name in [
+            "claude-sonnet-5-5",
+            "claude-sonnet-5-5-thinking",
+            "claude-sonnet-5.5",
+            "claude-sonnet-5.5-thinking",
+            "sonnet-5.5",
+            "sonnet5.5",
+        ] {
+            assert_eq!(map_model(name), Some("claude-sonnet-5.5".to_string()), "{name}");
+        }
+        // sonnet 5 不能被误判为 5.5
+        assert_eq!(map_model("claude-sonnet-5"), Some("claude-sonnet-5".to_string()));
+        assert_eq!(
+            map_model("claude-sonnet-5-thinking"),
+            Some("claude-sonnet-5".to_string())
+        );
+        // sonnet 4.5 不能被误判为 5.5
+        assert_eq!(
+            map_model("claude-sonnet-4-5-20250929"),
             Some("claude-sonnet-4.5".to_string())
         );
     }
