@@ -202,6 +202,17 @@ Never suggest bypassing these limits via alternative tools. \
 Never ask the user whether to switch approaches. \
 Complete all chunked operations without commentary.";
 
+/// 是否为 Haiku 5.5
+///
+/// Haiku 5.5 的 thinking 上游只收 adaptive / disabled
+fn is_haiku_5_5(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+    model_lower.contains("haiku-5-5")
+        || model_lower.contains("haiku-5.5")
+        || model_lower.contains("haiku5.5")
+        || model_lower.contains("haiku5-5")
+}
+
 /// 模型映射：将 Anthropic 模型名映射到 Kiro 模型 ID
 ///
 /// 按照用户要求：
@@ -215,7 +226,8 @@ Complete all chunked operations without commentary.";
 /// - opus 4.5/4-5 → claude-opus-4.5
 /// - opus 4.7/4-7 → claude-opus-4.7
 /// - 其他 opus → claude-opus-4.6
-/// - 所有 haiku → claude-haiku-4.5
+/// - haiku 5.5/5-5 → claude-haiku-5.5
+/// - 其他 haiku → claude-haiku-4.5
 pub fn map_model(model: &str) -> Option<String> {
     let model_lower = model.to_lowercase();
 
@@ -256,7 +268,12 @@ pub fn map_model(model: &str) -> Option<String> {
             Some("claude-opus-4.6".to_string())
         }
     } else if model_lower.contains("haiku") {
-        Some("claude-haiku-4.5".to_string())
+        if is_haiku_5_5(&model_lower) {
+            // 必须先于通用 haiku 判断，否则 5.5 会被降级成 haiku-4.5
+            Some("claude-haiku-5.5".to_string())
+        } else {
+            Some("claude-haiku-4.5".to_string())
+        }
     } else if model_lower == "auto" {
         Some("auto".to_string())
     } else if model_lower.contains("deepseek") {
@@ -1282,12 +1299,15 @@ fn convert_tools(tools: &Option<Vec<super::types::Tool>>) -> Vec<Tool> {
 /// 生成thinking标签前缀
 fn generate_thinking_prefix(req: &MessagesRequest) -> Option<String> {
     if let Some(t) = &req.thinking {
-        if t.thinking_type == "enabled" {
+        // Haiku 5.5 上游只收 adaptive / disabled，enabled 改按 adaptive 发
+        let adaptive = t.thinking_type == "adaptive"
+            || (t.thinking_type == "enabled" && is_haiku_5_5(&req.model));
+        if !adaptive && t.thinking_type == "enabled" {
             return Some(format!(
                 "<thinking_mode>enabled</thinking_mode><max_thinking_length>{}</max_thinking_length>",
                 t.budget_tokens
             ));
-        } else if t.thinking_type == "adaptive" {
+        } else if adaptive {
             let effort = req
                 .output_config
                 .as_ref()
@@ -1775,6 +1795,75 @@ mod tests {
     }
 
     #[test]
+    fn test_map_model_haiku_5_5() {
+        for name in [
+            "claude-haiku-5-5",
+            "claude-haiku-5-5-thinking",
+            "claude-haiku-5.5",
+            "claude-haiku-5.5-thinking",
+            "haiku-5.5",
+            "haiku5.5",
+        ] {
+            assert_eq!(map_model(name), Some("claude-haiku-5.5".to_string()), "{name}");
+        }
+        // haiku 4.5 不能被误判为 5.5
+        assert_eq!(
+            map_model("claude-haiku-4-5-20251001"),
+            Some("claude-haiku-4.5".to_string())
+        );
+        assert_eq!(map_model("claude-haiku-4-5"), Some("claude-haiku-4.5".to_string()));
+    }
+
+    fn thinking_request(model: &str, thinking_type: &str, effort: Option<&str>) -> MessagesRequest {
+        use super::super::types::Thinking;
+        MessagesRequest {
+            model: model.to_string(),
+            max_tokens: 1024,
+            messages: vec![],
+            stream: false,
+            system: None,
+            tools: None,
+            tool_choice: None,
+            thinking: Some(Thinking {
+                thinking_type: thinking_type.to_string(),
+                budget_tokens: 20000,
+            }),
+            output_config: effort.map(|e| OutputConfig {
+                effort: e.to_string(),
+                format: None,
+            }),
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_thinking_prefix_haiku_5_5() {
+        // adaptive 照常透传 effort
+        assert_eq!(
+            generate_thinking_prefix(&thinking_request("claude-haiku-5-5", "adaptive", Some("max"))).as_deref(),
+            Some("<thinking_mode>adaptive</thinking_mode><thinking_effort>max</thinking_effort>")
+        );
+        // 上游不收 enabled，改按 adaptive 发
+        assert_eq!(
+            generate_thinking_prefix(&thinking_request("claude-haiku-5-5", "enabled", None)).as_deref(),
+            Some("<thinking_mode>adaptive</thinking_mode><thinking_effort>high</thinking_effort>")
+        );
+        assert_eq!(
+            generate_thinking_prefix(&thinking_request("claude-haiku-5-5", "disabled", None)),
+            None
+        );
+        // haiku 4.5 和其他模型的 enabled 不受影响
+        assert_eq!(
+            generate_thinking_prefix(&thinking_request("claude-haiku-4-5-20251001", "enabled", None)).as_deref(),
+            Some("<thinking_mode>enabled</thinking_mode><max_thinking_length>20000</max_thinking_length>")
+        );
+        assert_eq!(
+            generate_thinking_prefix(&thinking_request("claude-sonnet-5-5", "enabled", None)).as_deref(),
+            Some("<thinking_mode>enabled</thinking_mode><max_thinking_length>20000</max_thinking_length>")
+        );
+    }
+
+    #[test]
     fn test_map_model_unsupported() {
         assert!(map_model("gpt-4").is_none());
     }
@@ -1971,6 +2060,10 @@ mod tests {
         // thinking 后缀不应影响 haiku 模型映射
         let result = map_model("claude-haiku-4-5-20251001-thinking");
         assert_eq!(result, Some("claude-haiku-4.5".to_string()));
+        assert_eq!(
+            map_model("claude-haiku-5-5-thinking"),
+            Some("claude-haiku-5.5".to_string())
+        );
     }
 
     #[test]
