@@ -144,8 +144,14 @@ fn default_region() -> String {
     "us-east-1".to_string()
 }
 
+/// 默认 Kiro 客户端版本号。
+///
+/// 上游设有客户端版本地板：2026-11-10 起 UA 里的 `KiroIDE-<version>` 为 0.11.107 及以下时，
+/// `generateAssistantResponse` 一律返回 403
+/// `{"message":"This version of Kiro is no longer supported...","reason":"FEATURE_NOT_SUPPORTED"}`
+/// （此前 credit 计费订阅低于 0.12.0 已会被 403 `not authorized` 拒绝）。0.12.0 已在线上验证放行。
 fn default_kiro_version() -> String {
-    "0.10.0".to_string()
+    "0.12.0".to_string()
 }
 
 fn default_system_version() -> String {

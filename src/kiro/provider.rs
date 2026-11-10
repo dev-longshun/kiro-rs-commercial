@@ -32,6 +32,10 @@ const MAX_TOTAL_RETRIES: usize = 9;
 /// 最大并发请求数（同时发往上游的请求上限）
 const MAX_CONCURRENT_REQUESTS: usize = 50;
 
+/// 客户端版本被上游拒绝时写进凭据事件的原因说明
+const CLIENT_VERSION_UNSUPPORTED_REASON: &str =
+    "上游拒绝客户端版本（kiroVersion 过低，与号无关）：未计入号失败，不换号重试";
+
 /// 请求使用的代理信息（用于事件日志）
 #[derive(Clone, Default)]
 struct ProxyInfo {
@@ -243,10 +247,10 @@ impl KiroProvider {
         let os_name = &config.system_version;
         let node_version = &config.node_version;
 
-        let x_amz_user_agent = format!("aws-sdk-js/1.0.27 KiroIDE-{}-{}", kiro_version, machine_id);
+        let x_amz_user_agent = format!("aws-sdk-js/1.0.34 KiroIDE-{}-{}", kiro_version, machine_id);
 
         let user_agent = format!(
-            "aws-sdk-js/1.0.27 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.27 m/E KiroIDE-{}-{}",
+            "aws-sdk-js/1.0.34 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.34 m/E KiroIDE-{}-{}",
             os_name, node_version, kiro_version, machine_id
         );
 
@@ -299,10 +303,10 @@ impl KiroProvider {
         let os_name = &config.system_version;
         let node_version = &config.node_version;
 
-        let x_amz_user_agent = format!("aws-sdk-js/1.0.27 KiroIDE-{}-{}", kiro_version, machine_id);
+        let x_amz_user_agent = format!("aws-sdk-js/1.0.34 KiroIDE-{}-{}", kiro_version, machine_id);
 
         let user_agent = format!(
-            "aws-sdk-js/1.0.27 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.27 m/E KiroIDE-{}-{}",
+            "aws-sdk-js/1.0.34 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.34 m/E KiroIDE-{}-{}",
             os_name, node_version, kiro_version, machine_id
         );
 
@@ -499,6 +503,22 @@ impl KiroProvider {
                     ),
                 );
                 anyhow::bail!("MCP 请求失败: {} {}", status, body);
+            }
+
+            // 客户端版本被上游拒绝：配置问题，换号无用。不计号失败、不再重试
+            if status.as_u16() == 403 && Self::is_client_version_unsupported(&body) {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone())
+                            .with_reason(CLIENT_VERSION_UNSUPPORTED_REASON),
+                    ),
+                );
+                return Err(self.client_version_unsupported_error("MCP", ctx.id, status, &body));
             }
 
             // 401/403 凭据问题
@@ -781,6 +801,24 @@ impl KiroProvider {
                 anyhow::bail!("{} API 请求失败: {} {}", api_type, status, body);
             }
 
+            // 客户端版本被上游拒绝：配置问题（kiroVersion 过低），换哪个号都一样。
+            // 不计号失败、不禁号、不换号重试——否则每个请求都会把多个号各打一遍，
+            // 白白烧掉号的请求频率额度并把号误禁。
+            if status.as_u16() == 403 && Self::is_client_version_unsupported(&body) {
+                self.emit_event(
+                    proxy_info.to_event(
+                        CredentialEvent::new(CredentialEventType::ApiFailure, ctx.id)
+                            .with_status(status.as_u16())
+                            .with_body(&body)
+                            .with_url(&url)
+                            .with_attempt(attempt + 1, max_retries)
+                            .with_request_headers(headers_summary.clone())
+                            .with_reason(CLIENT_VERSION_UNSUPPORTED_REASON),
+                    ),
+                );
+                return Err(self.client_version_unsupported_error(api_type, ctx.id, status, &body));
+            }
+
             // 401/403 - 更可能是凭据/权限问题：计入失败并允许故障转移
             if matches!(status.as_u16(), 401 | 403) {
                 tracing::warn!(
@@ -1047,6 +1085,46 @@ impl KiroProvider {
         "network_error"
     }
 
+    /// 检测是否为「客户端版本过低」类 403：
+    /// `{"message":"This version of Kiro is no longer supported. ...","reason":"FEATURE_NOT_SUPPORTED"}`。
+    ///
+    /// 要求 reason 与 message 同时命中，避免把别的 FEATURE_NOT_SUPPORTED（个别号不支持某功能）
+    /// 误判成版本问题。
+    fn is_client_version_unsupported(body: &str) -> bool {
+        if !body.contains("FEATURE_NOT_SUPPORTED") {
+            return false;
+        }
+        let lower = body.to_lowercase();
+        lower.contains("version") && lower.contains("no longer supported")
+    }
+
+    /// 客户端版本被拒：打一条 ERROR 告警（带当前 kiroVersion），返回结束本次请求的错误。
+    fn client_version_unsupported_error(
+        &self,
+        api_type: &str,
+        credential_id: u64,
+        status: reqwest::StatusCode,
+        body: &str,
+    ) -> anyhow::Error {
+        let kiro_version = self.token_manager.config().kiro_version.clone();
+        tracing::error!(
+            credential_id,
+            kiro_version = %kiro_version,
+            status = status.as_u16(),
+            body = %body,
+            "上游拒绝客户端版本 KiroIDE-{}：这是配置问题，与号无关，已停止重试且未计入号失败。\
+             请把 config.json 的 kiroVersion 调高（≥ 0.12.0，或删掉该字段使用默认值）后重启",
+            kiro_version
+        );
+        anyhow::anyhow!(
+            "{} API 请求失败（客户端版本 KiroIDE-{} 被上游拒绝，请调高 kiroVersion）: {} {}",
+            api_type,
+            kiro_version,
+            status,
+            body
+        )
+    }
+
     fn is_monthly_request_limit(body: &str) -> bool {
         if body.contains("MONTHLY_REQUEST_COUNT") {
             return true;
@@ -1080,6 +1158,29 @@ mod tests {
     fn create_test_provider(config: Config, credentials: KiroCredentials) -> KiroProvider {
         let tm = MultiTokenManager::new(config, vec![credentials], None, None, false).unwrap();
         KiroProvider::new(Arc::new(tm))
+    }
+
+    #[test]
+    fn test_is_client_version_unsupported() {
+        // 2026-11-10 上游对 kiroVersion 0.11.107 返回的原文
+        let rejected = r#"{"message":"This version of Kiro is no longer supported. Please update to the latest version of Kiro to continue.","reason":"FEATURE_NOT_SUPPORTED"}"#;
+        assert!(KiroProvider::is_client_version_unsupported(rejected));
+
+        // 同一 reason 的其他功能性拒绝不算版本问题，仍按单号错误处理
+        let other_feature = r#"{"message":"This feature is not supported for your account.","reason":"FEATURE_NOT_SUPPORTED"}"#;
+        assert!(!KiroProvider::is_client_version_unsupported(other_feature));
+
+        // 无权调用 / Token 失效等常规 403 不受影响
+        let not_authorized = r#"{"message":"User is not authorized to make this call."}"#;
+        assert!(!KiroProvider::is_client_version_unsupported(not_authorized));
+        let bad_token = r#"{"message":"The bearer token included in the request is invalid."}"#;
+        assert!(!KiroProvider::is_client_version_unsupported(bad_token));
+    }
+
+    #[test]
+    fn test_default_kiro_version_meets_upstream_floor() {
+        // 上游 2026-11-10 起拒绝 0.11.107 及更低版本
+        assert_eq!(Config::default().kiro_version, "0.12.0");
     }
 
     #[test]
